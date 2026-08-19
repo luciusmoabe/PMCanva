@@ -22,6 +22,8 @@ export async function loadCanvas(): Promise<PersistedCanvas | null> {
     return null
   }
 
+  if (!data || !Array.isArray(data.blocks) || data.blocks.length === 0) return null
+
   return data
 }
 
