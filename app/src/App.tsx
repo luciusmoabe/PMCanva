@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Activity, Archive, ArrowUpRight, Bell, BookOpen, Check, ChevronDown, CircleHelp, Clock3, FilePlus2, Filter, FolderKanban, Grid2X2, LayoutDashboard, MessageCircle, MoreHorizontal, Plus, Search, Settings, ShieldCheck, Sparkles, Users, X } from 'lucide-react'
+import { loadCanvas, saveCanvas } from './lib/canvasRepository'
 import './App.css'
 
 type Note = { id: number; text: string; author: string; color: string; status?: 'done' | 'review' }
@@ -28,6 +29,7 @@ function App() {
     const stored = localStorage.getItem('projectly-canvas-blocks')
     return stored ? JSON.parse(stored) as CanvasBlock[] : initialBlocks
   })
+  const [isHydrated, setIsHydrated] = useState(false)
   const [activeNav, setActiveNav] = useState('Meus projetos')
   const [selectedBlock, setSelectedBlock] = useState('why')
   const [search, setSearch] = useState('')
@@ -40,8 +42,25 @@ function App() {
   const [projectStatus, setProjectStatus] = useState(() => localStorage.getItem('projectly-project-status') ?? 'EM VALIDAÇÃO')
   const [version, setVersion] = useState(() => Number(localStorage.getItem('projectly-project-version') ?? '1.4'))
   const filteredBlocks = blocks.map((block) => ({ ...block, notes: block.notes.filter((note) => note.text.toLowerCase().includes(search.toLowerCase()) && (activeFilter === 'all' || note.status === activeFilter)) })).filter((block) => activeFilter === 'all' || block.notes.length > 0)
-  useEffect(() => { localStorage.setItem('projectly-canvas-blocks', JSON.stringify(blocks)) }, [blocks])
-  useEffect(() => { localStorage.setItem('projectly-project-status', projectStatus); localStorage.setItem('projectly-project-version', version.toFixed(1)) }, [projectStatus, version])
+  useEffect(() => {
+    let isMounted = true
+    loadCanvas().then((remoteCanvas) => {
+      if (isMounted && remoteCanvas) {
+        setBlocks(remoteCanvas.blocks as CanvasBlock[])
+        setProjectStatus(remoteCanvas.status)
+        setVersion(remoteCanvas.version)
+      }
+      if (isMounted) setIsHydrated(true)
+    })
+    return () => { isMounted = false }
+  }, [])
+  useEffect(() => {
+    if (!isHydrated) return
+    localStorage.setItem('projectly-canvas-blocks', JSON.stringify(blocks))
+    localStorage.setItem('projectly-project-status', projectStatus)
+    localStorage.setItem('projectly-project-version', version.toFixed(1))
+    void saveCanvas({ blocks, status: projectStatus, version })
+  }, [blocks, projectStatus, version, isHydrated])
   function addNote() {
     if (!newNote.trim()) return
     setBlocks((current) => current.map((block) => block.id === selectedBlock ? { ...block, notes: [...block.notes, { id: Date.now(), text: newNote.trim(), author: 'AS', color: 'yellow' }] } : block))
