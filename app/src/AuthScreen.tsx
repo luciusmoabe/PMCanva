@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { LogIn, Mail, Sparkles, UserPlus } from 'lucide-react'
-import { signInWithMagicLink, signInWithPassword, signUpWithPassword } from './lib/authRepository'
+import { resetPasswordForEmail, signInWithMagicLink, signInWithPassword, signUpWithPassword } from './lib/authRepository'
 
-type Mode = 'signin' | 'signup' | 'magic'
+type Mode = 'signin' | 'signup' | 'magic' | 'forgot'
 
 const modeOptions: { id: Mode; label: string; icon: typeof LogIn }[] = [
   { id: 'signin', label: 'Entrar', icon: LogIn },
@@ -31,6 +31,9 @@ function AuthScreen() {
       } else if (mode === 'signup') {
         const { needsEmailConfirmation } = await signUpWithPassword(email, password, fullName)
         if (needsEmailConfirmation) setInfo('Cadastro criado. Verifique seu e-mail para confirmar a conta antes de entrar.')
+      } else if (mode === 'forgot') {
+        await resetPasswordForEmail(email)
+        setInfo('Se esse e-mail estiver cadastrado, enviamos um link para redefinir a senha.')
       } else {
         await signInWithMagicLink(email)
         setInfo('Enviamos um link de acesso para o seu e-mail.')
@@ -47,14 +50,18 @@ function AuthScreen() {
       <div className="auth-card">
         <div className="brand"><span className="brand-mark">P</span><span>projectly</span></div>
         <span className="canvas-kicker">PROJECT MODEL CANVAS</span>
-        <h1>Acesse seu workspace</h1>
-        <div className="auth-tabs">
-          {modeOptions.map(({ id, label, icon: Icon }) => (
-            <button key={id} type="button" className={mode === id ? 'auth-tab active' : 'auth-tab'} onClick={() => { setMode(id); setError(null); setInfo(null) }}>
-              <Icon size={14} /> {label}
-            </button>
-          ))}
-        </div>
+        <h1>{mode === 'forgot' ? 'Redefinir senha' : 'Acesse seu workspace'}</h1>
+        {mode === 'forgot' ? (
+          <button type="button" className="tiny-link" onClick={() => { setMode('signin'); setError(null); setInfo(null) }}>&larr; Voltar para o login</button>
+        ) : (
+          <div className="auth-tabs">
+            {modeOptions.map(({ id, label, icon: Icon }) => (
+              <button key={id} type="button" className={mode === id ? 'auth-tab active' : 'auth-tab'} onClick={() => { setMode(id); setError(null); setInfo(null) }}>
+                <Icon size={14} /> {label}
+              </button>
+            ))}
+          </div>
+        )}
         <form onSubmit={handleSubmit}>
           {mode === 'signup' && (
             <label>Nome completo
@@ -64,16 +71,19 @@ function AuthScreen() {
           <label>E-mail
             <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="voce@empresa.com" required />
           </label>
-          {mode !== 'magic' && (
+          {mode !== 'magic' && mode !== 'forgot' && (
             <label>Senha
               <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="********" minLength={6} required />
             </label>
           )}
+          {mode === 'signin' && (
+            <button type="button" className="tiny-link forgot-password-link" onClick={() => { setMode('forgot'); setError(null); setInfo(null) }}>Esqueci minha senha</button>
+          )}
           {error && <div className="error-banner">{error}</div>}
           {info && <div className="info-banner">{info}</div>}
           <button type="submit" className="primary-button auth-submit" disabled={loading}>
-            {mode === 'magic' ? <Mail size={15} /> : <LogIn size={15} />}
-            {loading ? 'Aguarde...' : mode === 'signin' ? 'Entrar' : mode === 'signup' ? 'Criar conta' : 'Enviar link magico'}
+            {mode === 'magic' || mode === 'forgot' ? <Mail size={15} /> : <LogIn size={15} />}
+            {loading ? 'Aguarde...' : mode === 'signin' ? 'Entrar' : mode === 'signup' ? 'Criar conta' : mode === 'forgot' ? 'Enviar link de redefinição' : 'Enviar link magico'}
           </button>
         </form>
       </div>

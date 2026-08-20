@@ -67,6 +67,14 @@ create table if not exists public.notes (
   updated_at timestamptz not null default now()
 );
 
+-- Optional supporting fields ("campos de apoio"), added after the
+-- table already existed: help make an objective/benefit/deliverable
+-- note more rigorous (indicator to track, where the evidence comes
+-- from, when to revisit it) without forcing every note to fill them.
+alter table public.notes add column if not exists indicator text;
+alter table public.notes add column if not exists evidence_source text;
+alter table public.notes add column if not exists review_date date;
+
 -- ------------------------------------------------------------
 -- Invitations: pending organization invite by e-mail. No e-mail
 -- is actually sent — the admin communicates the invite out of

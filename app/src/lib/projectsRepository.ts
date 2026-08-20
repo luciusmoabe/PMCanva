@@ -22,9 +22,18 @@ export type NoteRow = {
   author: string
   color: string
   status: 'done' | 'review' | null
+  indicator: string | null
+  evidence_source: string | null
+  review_date: string | null
   created_by: string | null
   created_at: string
   updated_at: string
+}
+
+export type NoteSupportFields = {
+  indicator: string | null
+  evidenceSource: string | null
+  reviewDate: string | null
 }
 
 export async function listProjects(organizationId: string): Promise<ProjectRow[]> {
@@ -79,12 +88,12 @@ export async function listNotes(projectId: string): Promise<NoteRow[]> {
   return data ?? []
 }
 
-export async function createNote(projectId: string, blockKey: string, text: string, author: string): Promise<NoteRow> {
+export async function createNote(projectId: string, blockKey: string, text: string, author: string, color: string, support: NoteSupportFields): Promise<NoteRow> {
   if (!supabase) throw new Error('Supabase nao configurado.')
 
   const { data, error } = await supabase
     .from('notes')
-    .insert({ project_id: projectId, block_key: blockKey, text, author })
+    .insert({ project_id: projectId, block_key: blockKey, text, author, color, indicator: support.indicator, evidence_source: support.evidenceSource, review_date: support.reviewDate })
     .select('*')
     .single()
 
@@ -92,7 +101,7 @@ export async function createNote(projectId: string, blockKey: string, text: stri
   return data
 }
 
-export async function updateNote(noteId: string, patch: Partial<Pick<NoteRow, 'text' | 'status' | 'color'>>): Promise<void> {
+export async function updateNote(noteId: string, patch: Partial<Pick<NoteRow, 'text' | 'status' | 'color' | 'indicator' | 'evidence_source' | 'review_date'>>): Promise<void> {
   if (!supabase) return
 
   const { error } = await supabase.from('notes').update(patch).eq('id', noteId).select('id').single()
