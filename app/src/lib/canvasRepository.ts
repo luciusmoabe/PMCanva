@@ -41,8 +41,11 @@ export async function saveCanvas(canvas: PersistedCanvas): Promise<void> {
   if (error) console.warn('Supabase canvas save failed:', error.message)
 }
 
-export function subscribeToCanvas(onChange: (canvas: PersistedCanvas) => void) {
-  if (!supabase) return () => undefined
+export function subscribeToCanvas(onChange: (canvas: PersistedCanvas) => void, onStatus?: (status: 'online' | 'offline') => void) {
+  if (!supabase) {
+    onStatus?.('offline')
+    return () => undefined
+  }
   const client = supabase
 
   const channel = client
@@ -56,7 +59,9 @@ export function subscribeToCanvas(onChange: (canvas: PersistedCanvas) => void) {
       const record = payload.new as PersistedCanvas
       if (Array.isArray(record.blocks) && record.blocks.length > 0) onChange(record)
     })
-    .subscribe()
+    .subscribe((status) => {
+      onStatus?.(status === 'SUBSCRIBED' ? 'online' : 'offline')
+    })
 
   return () => { void client.removeChannel(channel) }
 }
