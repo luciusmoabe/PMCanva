@@ -40,3 +40,23 @@ export async function saveCanvas(canvas: PersistedCanvas): Promise<void> {
 
   if (error) console.warn('Supabase canvas save failed:', error.message)
 }
+
+export function subscribeToCanvas(onChange: (canvas: PersistedCanvas) => void) {
+  if (!supabase) return () => undefined
+  const client = supabase
+
+  const channel = client
+    .channel('projectly-demo-canvas-realtime')
+    .on('postgres_changes', {
+      event: 'UPDATE',
+      schema: 'public',
+      table: 'project_canvases',
+      filter: `canvas_key=eq.${canvasKey}`,
+    }, (payload) => {
+      const record = payload.new as PersistedCanvas
+      if (Array.isArray(record.blocks) && record.blocks.length > 0) onChange(record)
+    })
+    .subscribe()
+
+  return () => { void client.removeChannel(channel) }
+}

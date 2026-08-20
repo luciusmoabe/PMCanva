@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Activity, Archive, ArrowUpRight, Bell, BookOpen, Check, ChevronDown, CircleHelp, Clock3, FilePlus2, Filter, FolderKanban, Grid2X2, LayoutDashboard, MessageCircle, MoreHorizontal, Plus, Search, Settings, ShieldCheck, Sparkles, Users, X } from 'lucide-react'
-import { loadCanvas, saveCanvas } from './lib/canvasRepository'
+import { loadCanvas, saveCanvas, subscribeToCanvas } from './lib/canvasRepository'
 import './App.css'
 
 type Note = { id: number; text: string; author: string; color: string; status?: 'done' | 'review' }
@@ -41,6 +41,7 @@ function App() {
   const [showActivity, setShowActivity] = useState(false)
   const [projectStatus, setProjectStatus] = useState(() => localStorage.getItem('projectly-project-status') ?? 'EM VALIDAÇÃO')
   const [version, setVersion] = useState(() => Number(localStorage.getItem('projectly-project-version') ?? '1.4'))
+  const skipNextRemoteSave = useRef(false)
   const filteredBlocks = blocks.map((block) => ({ ...block, notes: block.notes.filter((note) => note.text.toLowerCase().includes(search.toLowerCase()) && (activeFilter === 'all' || note.status === activeFilter)) })).filter((block) => activeFilter === 'all' || block.notes.length > 0)
   useEffect(() => {
     let isMounted = true
@@ -52,10 +53,20 @@ function App() {
       }
       if (isMounted) setIsHydrated(true)
     })
-    return () => { isMounted = false }
+    const unsubscribe = subscribeToCanvas((remoteCanvas) => {
+      skipNextRemoteSave.current = true
+      setBlocks(remoteCanvas.blocks as CanvasBlock[])
+      setProjectStatus(remoteCanvas.status)
+      setVersion(remoteCanvas.version)
+    })
+    return () => { isMounted = false; unsubscribe() }
   }, [])
   useEffect(() => {
     if (!isHydrated) return
+    if (skipNextRemoteSave.current) {
+      skipNextRemoteSave.current = false
+      return
+    }
     localStorage.setItem('projectly-canvas-blocks', JSON.stringify(blocks))
     localStorage.setItem('projectly-project-status', projectStatus)
     localStorage.setItem('projectly-project-version', version.toFixed(1))

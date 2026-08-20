@@ -10,6 +10,8 @@ A aplicacao usa o projeto Supabase configurado em `app/.env.local`.
 
 O schema cria `public.project_canvases`, ativa RLS e libera somente o registro de demonstracao `projectly-demo-canvas` para o prototipo sem autenticacao.
 
+O frontend tambem abre uma assinatura Supabase Realtime para esse registro. No painel do Supabase, confirme que `project_canvases` esta incluida na publicacao `supabase_realtime` para que alteracoes feitas por outro navegador sejam recebidas imediatamente.
+
 ## Producao
 
 Antes de disponibilizar o sistema para usuarios reais:
