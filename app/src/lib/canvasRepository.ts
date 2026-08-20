@@ -4,6 +4,8 @@ export type PersistedCanvas = {
   blocks: unknown
   status: string
   version: number
+  project_name?: string
+  manager_name?: string
 }
 
 const canvasKey = 'projectly-demo-canvas'
@@ -13,7 +15,7 @@ export async function loadCanvas(): Promise<PersistedCanvas | null> {
 
   const { data, error } = await supabase
     .from('project_canvases')
-    .select('blocks, status, version')
+    .select('blocks, status, version, project_name, manager_name')
     .eq('canvas_key', canvasKey)
     .maybeSingle()
 
@@ -35,6 +37,8 @@ export async function saveCanvas(canvas: PersistedCanvas): Promise<void> {
     blocks: canvas.blocks,
     status: canvas.status,
     version: canvas.version,
+    project_name: canvas.project_name,
+    manager_name: canvas.manager_name,
     updated_at: new Date().toISOString(),
   }, { onConflict: 'canvas_key' })
 

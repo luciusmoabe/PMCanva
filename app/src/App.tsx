@@ -44,9 +44,19 @@ function App() {
   const [showActivity, setShowActivity] = useState(false)
   const [projectStatus, setProjectStatus] = useState(() => localStorage.getItem('projectly-project-status') ?? 'EM VALIDAÇÃO')
   const [version, setVersion] = useState(() => Number(localStorage.getItem('projectly-project-version') ?? '1.4'))
+  const [projectName, setProjectName] = useState(() => localStorage.getItem('projectly-project-name') ?? 'Canvas de Plataforma PMO')
+  const [managerName, setManagerName] = useState(() => localStorage.getItem('projectly-manager-name') ?? 'Ana Souza')
   const [realtimeStatus, setRealtimeStatus] = useState<'online' | 'offline'>('offline')
   const skipNextRemoteSave = useRef(false)
   const filteredBlocks = blocks.map((block) => ({ ...block, notes: block.notes.filter((note) => note.text.toLowerCase().includes(search.toLowerCase()) && (activeFilter === 'all' || note.status === activeFilter)) })).filter((block) => activeFilter === 'all' || block.notes.length > 0)
+  useEffect(() => {
+    document.querySelector('.canvas-grid')?.setAttribute('data-manager', managerName)
+    document.querySelector('.canvas-grid')?.setAttribute('data-project', projectName)
+    const projectTitle = document.querySelector('.project-heading h1')
+    if (projectTitle) projectTitle.textContent = projectName
+    const breadcrumb = document.querySelector('.breadcrumbs b')
+    if (breadcrumb) breadcrumb.textContent = projectName
+  }, [projectName, managerName])
   useEffect(() => {
     let isMounted = true
     loadCanvas().then((remoteCanvas) => {
@@ -54,6 +64,8 @@ function App() {
         setBlocks(remoteCanvas.blocks as CanvasBlock[])
         setProjectStatus(remoteCanvas.status)
         setVersion(remoteCanvas.version)
+        if (remoteCanvas.project_name) setProjectName(remoteCanvas.project_name)
+        if (remoteCanvas.manager_name) setManagerName(remoteCanvas.manager_name)
       }
       if (isMounted) setIsHydrated(true)
     })
@@ -62,6 +74,8 @@ function App() {
       setBlocks(remoteCanvas.blocks as CanvasBlock[])
       setProjectStatus(remoteCanvas.status)
       setVersion(remoteCanvas.version)
+      if (remoteCanvas.project_name) setProjectName(remoteCanvas.project_name)
+      if (remoteCanvas.manager_name) setManagerName(remoteCanvas.manager_name)
     }, setRealtimeStatus)
     return () => { isMounted = false; unsubscribe() }
   }, [])
@@ -74,8 +88,10 @@ function App() {
     localStorage.setItem('projectly-canvas-blocks', JSON.stringify(blocks))
     localStorage.setItem('projectly-project-status', projectStatus)
     localStorage.setItem('projectly-project-version', version.toFixed(1))
-    void saveCanvas({ blocks, status: projectStatus, version })
-  }, [blocks, projectStatus, version, isHydrated])
+    localStorage.setItem('projectly-project-name', projectName)
+    localStorage.setItem('projectly-manager-name', managerName)
+    void saveCanvas({ blocks, status: projectStatus, version, project_name: projectName, manager_name: managerName })
+  }, [blocks, projectStatus, version, projectName, managerName, isHydrated])
   useEffect(() => {
     const handleNoteClick = (event: MouseEvent) => {
       const target = event.target as HTMLElement
@@ -98,7 +114,7 @@ function App() {
     setNewComment('')
   }
   function exportCanvas() {
-    const payload = JSON.stringify({ project: 'Canvas de Plataforma PMO', status: projectStatus, version, blocks, comments }, null, 2)
+    const payload = JSON.stringify({ project: projectName, manager: managerName, status: projectStatus, version, blocks, comments }, null, 2)
     const file = new Blob([payload], { type: 'application/json' })
     const link = document.createElement('a')
     link.href = URL.createObjectURL(file)

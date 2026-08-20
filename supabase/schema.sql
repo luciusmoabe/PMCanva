@@ -3,8 +3,13 @@ create table if not exists public.project_canvases (
   blocks jsonb not null default '[]'::jsonb,
   status text not null default 'EM VALIDAÇÃO',
   version numeric(4, 1) not null default 1.4,
+  project_name text not null default 'Canvas de Plataforma PMO',
+  manager_name text not null default 'Ana Souza',
   updated_at timestamptz not null default now()
 );
+
+alter table public.project_canvases add column if not exists project_name text not null default 'Canvas de Plataforma PMO';
+alter table public.project_canvases add column if not exists manager_name text not null default 'Ana Souza';
 
 alter table public.project_canvases enable row level security;
 
