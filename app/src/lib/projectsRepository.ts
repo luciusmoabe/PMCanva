@@ -6,6 +6,7 @@ export type ProjectRow = {
   organization_id: string
   name: string
   manager_name: string
+  manager_user_id: string | null
   status: string
   version: number
   created_by: string | null
@@ -42,12 +43,12 @@ export async function listProjects(organizationId: string): Promise<ProjectRow[]
   return data ?? []
 }
 
-export async function createProject(organizationId: string, name: string, managerName: string): Promise<ProjectRow> {
+export async function createProject(organizationId: string, name: string, managerUserId: string, managerName: string): Promise<ProjectRow> {
   if (!supabase) throw new Error('Supabase nao configurado.')
 
   const { data, error } = await supabase
     .from('projects')
-    .insert({ organization_id: organizationId, name, manager_name: managerName })
+    .insert({ organization_id: organizationId, name, manager_user_id: managerUserId, manager_name: managerName })
     .select('*')
     .single()
 
@@ -55,7 +56,7 @@ export async function createProject(organizationId: string, name: string, manage
   return data
 }
 
-export async function updateProject(projectId: string, patch: Partial<Pick<ProjectRow, 'name' | 'manager_name' | 'status' | 'version'>>): Promise<void> {
+export async function updateProject(projectId: string, patch: Partial<Pick<ProjectRow, 'name' | 'manager_name' | 'manager_user_id' | 'status' | 'version'>>): Promise<void> {
   if (!supabase) return
 
   const { error } = await supabase.from('projects').update(patch).eq('id', projectId)

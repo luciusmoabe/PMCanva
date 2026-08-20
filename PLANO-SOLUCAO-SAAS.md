@@ -14,7 +14,9 @@ Esse teste tambem revelou e corrigiu um bug real de uma rodada anterior: `listMy
 
 Ainda no dia 20/08/2026, entraram duas pecas de governanca: **projeto aprovado agora trava de verdade** (trigger + RLS no banco impedem criar, editar ou excluir nota, e impedem editar qualquer campo do projeto, enquanto o status for `APROVADO`; "Nova versão" e o unico jeito de destravar) e **trilha de auditoria real** (tabela `audit_events`, escrita so por triggers — nunca pelo cliente — registrando quem criou/editou/excluiu cada nota e quem aprovou/reabriu o projeto, substituindo o aviso "ainda nao implementado" na aba Atividade). Ambos validados tentando contornar pela API direto (sem passar pela UI) e confirmando que o banco rejeita.
 
-O que falta agora e sobretudo snapshot imutavel de versao (guardar uma copia separada do conteudo aprovado, nao so travar o atual) e aprovacao por bloco/multiplos stakeholders — a fundacao de identidade, a colaboracao basica e o travamento de governanca ja estao de pe.
+Ainda no dia 20/08/2026, entrou tambem o **snapshot imutavel de versao**: um trigger (`snapshot_canvas_version`) grava uma copia congelada de todas as notas toda vez que o projeto e aprovado, e uma nova aba "Versões" lista e permite expandir cada snapshot. Testado com dois ciclos de aprovacao seguidos, confirmando que aprovar a versao seguinte nao altera o que ja tinha sido congelado na anterior.
+
+O que falta agora e sobretudo aprovacao por bloco/multiplos stakeholders e tela de comparacao entre versoes — a fundacao de identidade, a colaboracao basica, o travamento de governanca e o historico de versoes ja estao de pe.
 
 **Stack em uso**
 
@@ -39,13 +41,14 @@ O que falta agora e sobretudo snapshot imutavel de versao (guardar uma copia sep
 - Criacao e troca de projetos dentro da organizacao ativa.
 - Projeto `APROVADO` fica travado de verdade: um trigger no banco (`enforce_project_lock`) bloqueia qualquer update no projeto que mantenha o status aprovado, e a RLS de `notes` passa a rejeitar insert/update/delete enquanto o projeto do dono da nota estiver aprovado. "Nova versão" continua liberado (e o unico jeito de destravar). Comentarios continuam liberados mesmo com o projeto aprovado, de proposito.
 - Trilha de auditoria real: tabela `audit_events`, escrita exclusivamente por triggers (`log_note_audit_event`, `log_project_audit_event`) — o cliente nao tem policy de insert, testado tentando inserir direto pela API e confirmando rejeicao. A aba "Atividade" mostra criacao/edicao/exclusao de nota e aprovacao/nova versao do projeto, com autor real e timestamp, mais recente primeiro.
+- Snapshot imutavel de versao: tabela `canvas_versions`, escrita so pelo trigger `snapshot_canvas_version` toda vez que o projeto entra em `APROVADO`, guardando nome/gerente/numero de versao e uma copia das notas daquele momento (bloco, texto, autor, cor, status). A aba "Versões" lista as aprovacoes e permite expandir cada uma para ver o snapshot completo por bloco.
 
 **Lacunas que continuam**
 
 - Convite so por e-mail cadastrado manualmente pelo admin, sem link de convite com expiracao (a secao 4.3 do plano original pede "convite por link"; o que existe e mais simples: um registro pendente por e-mail).
 - Recuperacao de senha, MFA e revogacao de sessao ainda nao foram implementadas.
 - Comentarios continuam em nivel de projeto (nao por nota/bloco), sem mencoes e sem resolucao — decisao deliberada de manter fora de escopo nesta rodada tambem, para nao desenhar uma UI de threads que ninguem pediu ainda.
-- "Versao" e apenas um numero decimal incrementado por um botao; nao ha snapshot imutavel, historico nem comparacao entre versoes.
+- Ha snapshot imutavel e historico de versoes (aba "Versões"), mas nao ha tela de comparacao lado a lado entre duas versoes ainda — cada snapshot so pode ser visto isoladamente.
 - "Aprovar" e um unico botao que muda o status do projeto; nao existe aprovacao por bloco, por stakeholder, nem evento de auditoria associado.
 - O painel de "Atividade" mostra um aviso honesto de que a trilha de auditoria ainda nao foi implementada (nao mostra mais eventos fixos ilustrativos atribuidos a pessoas ficticias).
 - Exportacao gera apenas JSON; falta PDF e PNG previstos no MVP.
@@ -87,12 +90,13 @@ Cada organizacao deve possuir papeis configuraveis, grupos e escopos de acesso p
 
 ### 5.2 Projetos e canvas
 
-- [PARCIAL] Criacao de projeto a partir de canvas em branco ou template — cria em branco (sem notas de exemplo); nao ha templates de fato.
+- [PARCIAL] Criacao de projeto a partir de canvas em branco ou template — cria em branco (sem notas de exemplo); nao ha templates de fato. Nome e gerente sao definidos na criacao e **podem ser editados depois** (botao "..." na barra de ferramentas do canvas, visivel para admin/editor e escondido quando o projeto esta travado): o gerente e escolhido entre os membros reais da organizacao (`projects.manager_user_id`, coluna adicionada em 20/08/2026), nao mais um texto livre — `manager_name` continua existindo como rotulo de exibicao, preenchido automaticamente a partir do membro escolhido.
 - [FEITO] Os 13 blocos do Project Model Canvas, agrupados pelas perguntas do metodo, no layout classico.
 - [PARCIAL] Edicao de cartoes/notas com texto curto, autor e status (validada/em revisao) — autor agora e o nome/iniciais do usuario logado (nao mais fixo); ainda sem data, etiqueta livre ou responsavel dedicado.
 - [PARCIAL] Busca e filtro por status — reordenacao, fixacao e arquivamento de notas ainda nao existem.
 - [PENDENTE] Campos de apoio: objetivo SMART, indicador, fonte da evidencia e data de revisao.
 - [PENDENTE] Destaque de blocos vazios, notas sem responsavel e dependencias nao validadas.
+- [PENDENTE] Usuario escolher a cor de cada nota — a coluna `notes.color` ja existe no banco (usada hoje so para variar a cor visualmente sem significado, sempre `'yellow'` por padrao); falta um seletor de cor no composer de criar/editar nota e decidir se a cor e so estetica ou passa a carregar algum significado (ex.: por tema, por prioridade).
 
 ### 5.3 Colaboracao
 
@@ -155,7 +159,7 @@ Cada organizacao deve possuir papeis configuraveis, grupos e escopos de acesso p
 - `risks`, `deliverables`, `requirements`, `stakeholders`
 - `subscriptions`, `usage_counters`, `exports`, `invitations`
 
-Recomenda-se guardar o snapshot completo da versao publicada e os eventos de alteracao separadamente. Isso simplifica comparacao, auditoria e restauracao sem sacrificar a consulta do estado atual.
+Recomenda-se guardar o snapshot completo da versao publicada e os eventos de alteracao separadamente. Isso simplifica comparacao, auditoria e restauracao sem sacrificar a consulta do estado atual. *Feito em 20/08/2026: `canvas_versions` guarda o snapshot (jsonb de notas por versao) e `audit_events` guarda os eventos, ambos separados do estado atual em `projects`/`notes` — ver secao 2 e secao 14, item 7.*
 
 *Implementado hoje: `organizations`, `memberships` (papel, sem tabela `roles` separada), `projects`, `notes`, `comments` (nivel de projeto, sem `note_id`/`block_id`), `invitations` e `audit_events` (`supabase/schema.sql`). Os 13 blocos continuam fixos no front-end, nao no banco — nao ha `canvas_blocks`. Ainda faltam `canvases`/`canvas_versions` (snapshot imutavel de versao), `mentions`, `approvals`, `risks`/`deliverables`/`requirements`/`stakeholders` como entidades proprias, e `subscriptions`/`usage_counters`/`exports`.*
 
@@ -240,7 +244,7 @@ Com a fundacao de autenticacao/multi-tenancy e a colaboracao basica entre membro
 4. ~~Convite de membros por e-mail e comentarios sincronizados no banco entre usuarios.~~ Feito e validado em 20/08/2026 (sem envio real de e-mail; comentarios ainda em nivel de projeto, nao por nota/bloco).
 5. ~~Travar edicao de notas/projeto quando o status for `APROVADO`.~~ Feito e validado em 20/08/2026: um trigger no banco (`enforce_project_lock`) mais RLS em `notes` bloqueiam qualquer escrita enquanto aprovado, ate "Nova versão" resetar o status — testado inclusive tentando editar via API direto, sem passar pela UI. Comentarios continuam liberados de proposito.
 6. ~~Trilha de auditoria (`audit_events`).~~ Feito e validado em 20/08/2026: triggers em `notes` e `projects` registram criacao/edicao/exclusao de nota e aprovacao/nova versao do projeto, com autor real; sem policy de insert para o cliente (testado tentando inserir direto pela API). A aba "Atividade" mostra esse historico de verdade.
-7. Investir em snapshot de versao real (`canvases`/`canvas_versions`, com tela de historico/comparacao) — o travamento (item 5) impede *mudar* o conteudo aprovado, mas nao guarda uma *copia separada* dele; se alguem destravar com "Nova versão" e reescrever por engano, o que foi aprovado antes nao fica preservado em lugar nenhum.
+7. ~~Investir em snapshot de versao real (`canvas_versions`, com tela de historico).~~ Feito e validado em 20/08/2026: um trigger (`snapshot_canvas_version`) grava uma copia imutavel de todas as notas (bloco, texto, autor, cor, status) toda vez que o projeto entra em `APROVADO`, junto com nome/gerente/numero de versao daquele momento. A aba "Versões" lista cada aprovacao e permite expandir para ver o snapshot completo por bloco. Testado com dois ciclos de aprovacao seguidos: a versao 1.0 continuou mostrando so a nota original mesmo depois que a versao 1.1 foi aprovada com uma nota nova. Ainda falta tela de comparacao lado a lado entre versoes — hoje cada snapshot so pode ser visto isoladamente.
 8. Exportacao em PDF/PNG, real envio de e-mail para convites (via Supabase Edge Function + servico de e-mail) e recuperacao de senha/MFA — melhorias de qualidade de vida que nao bloqueiam o uso interno do app, mas bloqueiam abrir para usuarios externos de verdade.
 
 ## 15. Decisoes para iniciar o projeto
@@ -252,4 +256,4 @@ Com a fundacao de autenticacao/multi-tenancy e a colaboracao basica entre membro
 5. Aprovar o prototipo antes do desenvolvimento, com foco na leitura do canvas inteiro em uma unica tela.
 6. ~~Priorizar autenticacao e multi-tenancy antes de continuar investindo em recursos visuais do canvas.~~ Feito em 20/08/2026 — ver secao 2.
 7. ~~Priorizar convite de membros e comentarios sincronizados antes de recursos visuais adicionais.~~ Feito em 20/08/2026 — ver secao 2.
-8. ~~Travar edicao quando o projeto estiver aprovado e adicionar trilha de auditoria, antes de investir em snapshot de versao completo.~~ Feito em 20/08/2026 — ver secao 2 e secao 14, itens 5 e 6. Proxima prioridade de risco: nao existe copia imutavel do conteudo aprovado (secao 14, item 7) — o travamento impede editar e a auditoria registra quem mudou o que, mas nenhum dos dois guarda uma copia separada do conteudo em si.
+8. ~~Travar edicao quando o projeto estiver aprovado e adicionar trilha de auditoria, antes de investir em snapshot de versao completo.~~ Feito em 20/08/2026 — ver secao 2 e secao 14, itens 5 e 6. ~~Proxima prioridade de risco: nao existe copia imutavel do conteudo aprovado.~~ Feito em 20/08/2026 — ver secao 14, item 7 (`canvas_versions`).

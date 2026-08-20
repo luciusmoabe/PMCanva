@@ -43,6 +43,13 @@ create table if not exists public.projects (
   updated_at timestamptz not null default now()
 );
 
+-- Added after the initial table existed: references the org member
+-- assigned as manager. Nullable because older rows only have the
+-- free-text manager_name; manager_name stays as the denormalized
+-- display label (same pattern as notes.author), populated from the
+-- picked member's name/e-mail when this column is set on the client.
+alter table public.projects add column if not exists manager_user_id uuid references auth.users (id) on delete set null;
+
 create table if not exists public.notes (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects (id) on delete cascade,
@@ -613,6 +620,76 @@ drop trigger if exists log_project_audit_event on public.projects;
 create trigger log_project_audit_event
   after update on public.projects
   for each row execute function public.log_project_audit_event();
+
+-- ------------------------------------------------------------
+-- Canvas versions: an immutable snapshot of a project's notes,
+-- captured every time it transitions into APROVADO. The lock
+-- (enforce_project_lock) stops approved content from being edited,
+-- but "Nova versão" resets status back to RASCUNHO and lets editing
+-- resume — without a separate copy, whatever was approved would not
+-- be preserved anywhere once someone rewrites notes in the next
+-- draft cycle.
+-- ------------------------------------------------------------
+
+create table if not exists public.canvas_versions (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects (id) on delete cascade,
+  version numeric(6, 1) not null,
+  project_name text not null,
+  manager_name text not null,
+  approved_by uuid references auth.users (id) on delete set null,
+  approved_by_label text not null,
+  notes_snapshot jsonb not null,
+  approved_at timestamptz not null default now()
+);
+
+create index if not exists canvas_versions_project_idx on public.canvas_versions (project_id, approved_at desc);
+
+alter table public.canvas_versions enable row level security;
+
+drop policy if exists "canvas_versions_select_member" on public.canvas_versions;
+create policy "canvas_versions_select_member"
+  on public.canvas_versions for select
+  to authenticated
+  using (public.is_org_member(public.project_organization_id(project_id)));
+
+-- No insert/update/delete policy for authenticated: rows are only
+-- ever written by the security-definer trigger below, same pattern
+-- as audit_events.
+
+create or replace function public.snapshot_canvas_version()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  actor_label text := public.current_actor_label();
+  snapshot jsonb;
+begin
+  if new.status = 'APROVADO' and old.status <> 'APROVADO' then
+    select coalesce(jsonb_agg(jsonb_build_object(
+      'block_key', n.block_key,
+      'text', n.text,
+      'author', n.author,
+      'color', n.color,
+      'status', n.status
+    ) order by n.created_at), '[]'::jsonb)
+    into snapshot
+    from public.notes n
+    where n.project_id = new.id;
+
+    insert into public.canvas_versions (project_id, version, project_name, manager_name, approved_by, approved_by_label, notes_snapshot)
+    values (new.id, new.version, new.name, new.manager_name, auth.uid(), actor_label, snapshot);
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists snapshot_canvas_version on public.projects;
+create trigger snapshot_canvas_version
+  after update on public.projects
+  for each row execute function public.snapshot_canvas_version();
 
 -- ------------------------------------------------------------
 -- Realtime: broadcast row changes for projects, notes and comments.

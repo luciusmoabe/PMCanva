@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { Activity, Archive, ArrowDownToLine, ArrowUpRight, Bell, BookOpen, Check, ChevronDown, CircleHelp, FilePlus2, Filter, FolderKanban, Grid2X2, LayoutDashboard, MessageCircle, MoreHorizontal, Plus, Search, Settings, ShieldCheck, Sparkles, Users, X } from 'lucide-react'
+import { Activity, Archive, ArrowDownToLine, ArrowUpRight, Bell, BookOpen, Check, ChevronDown, CircleHelp, FilePlus2, Filter, FolderKanban, Grid2X2, History, LayoutDashboard, MessageCircle, MoreHorizontal, Plus, Search, Settings, ShieldCheck, Sparkles, Users, X } from 'lucide-react'
 import {
   createNote,
   createProject as createProjectRequest,
@@ -13,9 +13,10 @@ import {
   type NoteRow,
   type ProjectRow,
 } from './lib/projectsRepository'
-import type { Membership } from './lib/organizationsRepository'
+import { listOrgMembers, type Membership, type OrgMember } from './lib/organizationsRepository'
 import { listComments, createComment, type CommentRow } from './lib/commentsRepository'
 import { listAuditEvents, type AuditEventRow } from './lib/auditRepository'
+import { listCanvasVersions, type CanvasVersionRow } from './lib/canvasVersionsRepository'
 import { signOut } from './lib/authRepository'
 import { getDisplayName, getInitials } from './lib/userDisplay'
 import { roleLabels } from './lib/roleLabels'
@@ -55,13 +56,17 @@ function describeAuditEvent(event: AuditEventRow): string {
   }
 }
 
-function ProjectControls({ projects, activeProjectId, onSelect, onCreate }: { projects: ProjectRow[]; activeProjectId: string | null; onSelect: (id: string) => void; onCreate: (name: string, manager: string) => void }) {
+function memberLabel(member: OrgMember): string {
+  return member.fullName || member.email.split('@')[0]
+}
+
+function ProjectControls({ projects, activeProjectId, members, onSelect, onCreate, onOpenCreate }: { projects: ProjectRow[]; activeProjectId: string | null; members: OrgMember[]; onSelect: (id: string) => void; onCreate: (name: string, managerUserId: string, managerName: string) => void; onOpenCreate: () => void }) {
   const [isOpen, setIsOpen] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
   const [name, setName] = useState('')
-  const [manager, setManager] = useState('')
+  const [managerUserId, setManagerUserId] = useState('')
   const activeProject = projects.find((project) => project.id === activeProjectId)
-  return <div className="project-controls"><button className="project-select" onClick={() => setIsOpen(!isOpen)}><span className="workspace-avatar">N</span><span><b>{activeProject?.name ?? 'Nenhum projeto'}</b><small>Projeto atual · {activeProject?.manager_name ?? '-'}</small></span><ChevronDown size={15} /></button>{isOpen && <div className="project-menu"><span className="project-menu-label">PROJETOS DA ORGANIZAÇÃO</span>{projects.map((project) => <button key={project.id} className={project.id === activeProjectId ? 'project-option selected' : 'project-option'} onClick={() => { onSelect(project.id); setIsOpen(false) }}><span><b>{project.name}</b><small>GP · {project.manager_name}</small></span>{project.id === activeProjectId && <Check size={14} />}</button>)}<button className="new-project-option" onClick={() => { setIsCreating(true); setIsOpen(false) }}><Plus size={14} /> Novo projeto</button></div>}{isCreating && <div className="project-modal-backdrop" onClick={() => setIsCreating(false)}><form className="project-modal" onSubmit={(event) => { event.preventDefault(); if (name.trim() && manager.trim()) { onCreate(name.trim(), manager.trim()); setIsCreating(false); setName(''); setManager('') } }} onClick={(event) => event.stopPropagation()}><span className="canvas-kicker">NOVO PROJETO</span><h2>Criar canvas do projeto</h2><label>Nome do projeto<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Ex.: Implantação do PMO" autoFocus /></label><label>Gerente do projeto<input value={manager} onChange={(event) => setManager(event.target.value)} placeholder="Ex.: Ana Souza" /></label><div className="project-modal-actions"><button type="button" className="secondary-button" onClick={() => setIsCreating(false)}>Cancelar</button><button type="submit" className="primary-button"><Plus size={15} /> Criar projeto</button></div></form></div>}</div>
+  return <div className="project-controls"><button className="project-select" onClick={() => setIsOpen(!isOpen)}><span className="workspace-avatar">N</span><span><b>{activeProject?.name ?? 'Nenhum projeto'}</b><small>Projeto atual · {activeProject?.manager_name ?? '-'}</small></span><ChevronDown size={15} /></button>{isOpen && <div className="project-menu"><span className="project-menu-label">PROJETOS DA ORGANIZAÇÃO</span>{projects.map((project) => <button key={project.id} className={project.id === activeProjectId ? 'project-option selected' : 'project-option'} onClick={() => { onSelect(project.id); setIsOpen(false) }}><span><b>{project.name}</b><small>GP · {project.manager_name}</small></span>{project.id === activeProjectId && <Check size={14} />}</button>)}<button className="new-project-option" onClick={() => { onOpenCreate(); setManagerUserId(members[0]?.userId ?? ''); setIsCreating(true); setIsOpen(false) }}><Plus size={14} /> Novo projeto</button></div>}{isCreating && <div className="project-modal-backdrop" onClick={() => setIsCreating(false)}><form className="project-modal" onSubmit={(event) => { event.preventDefault(); const manager = members.find((member) => member.userId === managerUserId); if (name.trim() && manager) { onCreate(name.trim(), manager.userId, memberLabel(manager)); setIsCreating(false); setName('') } }} onClick={(event) => event.stopPropagation()}><span className="canvas-kicker">NOVO PROJETO</span><h2>Criar canvas do projeto</h2><label>Nome do projeto<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Ex.: Implantação do PMO" autoFocus /></label><label>Gerente do projeto<select value={managerUserId} onChange={(event) => setManagerUserId(event.target.value)}>{members.map((member) => <option key={member.userId} value={member.userId}>{memberLabel(member)}</option>)}</select></label><div className="project-modal-actions"><button type="button" className="secondary-button" onClick={() => setIsCreating(false)}>Cancelar</button><button type="submit" className="primary-button"><Plus size={15} /> Criar projeto</button></div></form></div>}</div>
 }
 
 function App({ session, organizationId, organizationName, role }: { session: Session; organizationId: string; organizationName: string; role: Membership['role'] }) {
@@ -73,7 +78,11 @@ function App({ session, organizationId, organizationName, role }: { session: Ses
 
   const [activeNav, setActiveNav] = useState('Meus projetos')
   const [projects, setProjects] = useState<ProjectRow[]>([])
+  const [orgMembers, setOrgMembers] = useState<OrgMember[]>([])
   const [isProjectsLoading, setIsProjectsLoading] = useState(true)
+  const [isEditingProject, setIsEditingProject] = useState(false)
+  const [editName, setEditName] = useState('')
+  const [editManagerUserId, setEditManagerUserId] = useState('')
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [notes, setNotes] = useState<NoteRow[]>([])
   const [selectedBlock, setSelectedBlock] = useState('why')
@@ -87,7 +96,9 @@ function App({ session, organizationId, organizationName, role }: { session: Ses
   const [newComment, setNewComment] = useState('')
   const [showFilters, setShowFilters] = useState(false)
   const [activeFilter, setActiveFilter] = useState<'all' | 'review' | 'done'>('all')
-  const [showActivity, setShowActivity] = useState(false)
+  const [activeView, setActiveView] = useState<'canvas' | 'activity' | 'history'>('canvas')
+  const [canvasVersions, setCanvasVersions] = useState<CanvasVersionRow[]>([])
+  const [expandedVersionId, setExpandedVersionId] = useState<string | null>(null)
   const [realtimeStatus, setRealtimeStatus] = useState<'online' | 'offline'>('offline')
   const [actionError, setActionError] = useState<string | null>(null)
 
@@ -112,15 +123,17 @@ function App({ session, organizationId, organizationName, role }: { session: Ses
       setIsProjectsLoading(false)
       setActiveProjectId((current) => current ?? result[0]?.id ?? null)
     })
+    listOrgMembers(organizationId).then((result) => { if (isMounted) setOrgMembers(result) })
     return () => { isMounted = false }
   }, [organizationId])
 
   useEffect(() => {
-    if (!activeProjectId) { setNotes([]); setComments([]); setAuditEvents([]); return }
+    if (!activeProjectId) { setNotes([]); setComments([]); setAuditEvents([]); setCanvasVersions([]); return }
     let isMounted = true
     listNotes(activeProjectId).then((result) => { if (isMounted) setNotes(result) })
     listComments(activeProjectId).then((result) => { if (isMounted) setComments(result) })
     listAuditEvents(activeProjectId).then((result) => { if (isMounted) setAuditEvents(result) })
+    listCanvasVersions(activeProjectId).then((result) => { if (isMounted) setCanvasVersions(result) })
     const unsubscribe = subscribeToProject(activeProjectId, {
       onNoteInsert: (note) => setNotes((current) => (current.some((item) => item.id === note.id) ? current : [...current, note])),
       onNoteUpdate: (note) => setNotes((current) => current.map((item) => (item.id === note.id ? note : item))),
@@ -133,6 +146,14 @@ function App({ session, organizationId, organizationName, role }: { session: Ses
 
   function refreshAuditEvents() {
     if (activeProjectId) listAuditEvents(activeProjectId).then(setAuditEvents)
+  }
+
+  function refreshCanvasVersions() {
+    if (activeProjectId) listCanvasVersions(activeProjectId).then(setCanvasVersions)
+  }
+
+  function refreshOrgMembers() {
+    listOrgMembers(organizationId).then(setOrgMembers)
   }
 
   async function addComment() {
@@ -200,13 +221,35 @@ function App({ session, organizationId, organizationName, role }: { session: Ses
     setActiveProjectId(projectId)
   }
 
-  async function createProject(name: string, manager: string) {
+  async function createProject(name: string, managerUserId: string, managerName: string) {
     try {
-      const project = await createProjectRequest(organizationId, name, manager)
+      const project = await createProjectRequest(organizationId, name, managerUserId, managerName)
       setProjects((current) => [...current, project])
       setActiveProjectId(project.id)
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Não foi possível criar o projeto.')
+    }
+  }
+
+  function openEditProject() {
+    if (!activeProject) return
+    refreshOrgMembers()
+    setEditName(activeProject.name)
+    setEditManagerUserId(activeProject.manager_user_id ?? orgMembers[0]?.userId ?? '')
+    setIsEditingProject(true)
+  }
+
+  async function saveProjectEdit() {
+    if (!activeProject || !editName.trim()) return
+    const manager = orgMembers.find((member) => member.userId === editManagerUserId)
+    if (!manager) return
+    const managerName = memberLabel(manager)
+    try {
+      await updateProject(activeProject.id, { name: editName.trim(), manager_user_id: manager.userId, manager_name: managerName })
+      setProjects((current) => current.map((project) => (project.id === activeProject.id ? { ...project, name: editName.trim(), manager_user_id: manager.userId, manager_name: managerName } : project)))
+      setIsEditingProject(false)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Não foi possível salvar o projeto.')
     }
   }
 
@@ -228,25 +271,27 @@ function App({ session, organizationId, organizationName, role }: { session: Ses
       await updateProject(activeProject.id, { status: 'APROVADO' })
       setProjects((current) => current.map((project) => (project.id === activeProject.id ? { ...project, status: 'APROVADO' } : project)))
       refreshAuditEvents()
+      refreshCanvasVersions()
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Não foi possível aprovar o projeto.')
     }
   }
 
   return (
-    <div className="app-shell">{activeNav !== 'Equipe' && <ProjectControls projects={projects} activeProjectId={activeProjectId} onSelect={selectProject} onCreate={createProject} />}
+    <div className="app-shell">{activeNav !== 'Equipe' && <ProjectControls projects={projects} activeProjectId={activeProjectId} members={orgMembers} onSelect={selectProject} onCreate={createProject} onOpenCreate={refreshOrgMembers} />}
       <aside className="sidebar"><div className="brand"><span className="brand-mark">P</span><span>projectly</span></div><div className="workspace-switcher"><span className="workspace-avatar">{organizationName.slice(0, 1).toUpperCase() || 'O'}</span><span><b>{organizationName}</b><small>Workspace principal</small></span><ChevronDown size={15} /></div><nav className="main-nav" aria-label="Navegação principal"><span className="nav-caption">WORKSPACE</span>{navItems.map(({ label, icon: Icon, count }) => <button key={label} className={activeNav === label ? 'nav-item active' : 'nav-item'} onClick={() => setActiveNav(label)}><Icon size={17} /><span>{label}</span>{count && <em>{count}</em>}</button>)}<span className="nav-caption nav-caption-spaced">GESTÃO</span><button className="nav-item"><Activity size={17} /><span>Atividade</span><i className="unread-dot" /></button><button className="nav-item"><Archive size={17} /><span>Arquivados</span></button></nav><div className="sidebar-bottom"><div className="upgrade-card"><Sparkles size={16} /><div><strong>Plano Team</strong><small>{projects.length} projetos ativos</small></div><ArrowUpRight size={14} /></div><button className="nav-item"><Settings size={17} /><span>Configurações</span></button><button className="user-card" onClick={() => void signOut()} title="Sair"><span className="avatar">{initials}</span><span><b>{displayName}</b><small>{roleLabels[role]}</small></span><MoreHorizontal size={16} /></button></div></aside>
       <main className="main-content"><header className="topbar"><div className="breadcrumbs"><span>Meus projetos</span><span>/</span><b>{activeProject?.name ?? 'Sem projeto'}</b></div><div className="top-actions"><button className="icon-button" title="Ajuda"><CircleHelp size={18} /></button><button className="icon-button notification" title="Notificações"><Bell size={18} /><i /></button><span className="top-avatar">{initials}</span></div></header><div className="page-content">
         {actionError && <div className="error-banner page-error"><span>{actionError}</span><button className="icon-button" onClick={() => setActionError(null)}><X size={14} /></button></div>}
         {activeNav === 'Equipe' ? <TeamPanel organizationId={organizationId} role={role} /> : isProjectsLoading ? <p className="empty-search">Carregando projetos...</p> : !activeProject ? (
           <section className="project-heading"><div><span className="canvas-kicker">COMECE POR AQUI</span><h1>Nenhum projeto ainda</h1><p>Use "Novo projeto" no canto superior esquerdo para criar o primeiro canvas da organização.</p></div></section>
         ) : <>
-        <section className="project-heading"><div><div className="eyebrow"><span className="status-dot" /> {activeProject.status}{isLocked && <span className="updated">· travado até nova versão</span>}</div><h1>{activeProject.name}</h1><p>Uma visão compartilhada para transformar ideias em projetos alinhados.</p></div>{canEdit && <div className="heading-actions"><button className="secondary-button" onClick={bumpVersion}><FilePlus2 size={16} /> Nova versão</button><button className="primary-button" onClick={approveProject} disabled={isLocked}><Check size={16} /> {isLocked ? 'Canvas aprovado' : 'Enviar para aprovação'}</button></div>}</section><section className="meta-row"><div className="people"><div className="avatar-stack"><span className="avatar-stack-item teal">{initials}</span></div><span>{displayName}</span></div><div className="meta-items"><button className={showComments ? 'meta-button active' : 'meta-button'} onClick={() => setShowComments(!showComments)}><MessageCircle size={15} /> comentários</button><span className="divider" /><button className="meta-button"><ShieldCheck size={15} /> versão {activeProject.version.toFixed(1)}</button></div></section>{showComments && <aside className="comments-panel"><div><span className="canvas-kicker">DISCUSSÃO ATIVA</span><strong>Comentários do canvas</strong></div><p>Os comentários abaixo ficam salvos apenas neste navegador.</p></aside>}<div className="toolbar"><div className="view-tabs"><button className={showActivity ? 'view-tab' : 'view-tab active'} onClick={() => setShowActivity(false)}><BookOpen size={15} /> Canvas</button><button className={showActivity ? 'view-tab active' : 'view-tab'} onClick={() => setShowActivity(true)}><Activity size={15} /> Atividade</button></div><div className="toolbar-actions"><div className="search-field"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar no canvas" /></div><div className="filter-wrap"><button className={showFilters ? 'filter-button active' : 'filter-button'} onClick={() => setShowFilters(!showFilters)}><Filter size={15} /> Filtros</button>{showFilters && <div className="filter-menu"><span>FILTRAR NOTAS</span>{(['all', 'review', 'done'] as const).map((filter) => <button key={filter} className={activeFilter === filter ? 'filter-option selected' : 'filter-option'} onClick={() => { setActiveFilter(filter); setShowFilters(false) }}>{filter === 'all' ? 'Todas as notas' : filter === 'review' ? 'Em revisão' : 'Validadas'}{activeFilter === filter && <Check size={13} />}</button>)}</div>}</div><button className="icon-button"><MoreHorizontal size={18} /></button></div></div>{showActivity ? <section className="activity-panel"><div className="activity-heading"><div><span className="canvas-kicker">HISTÓRICO DO PROJETO</span><h2>Atividade recente</h2></div><span className="activity-count">{auditEvents.length} eventos</span></div>{auditEvents.length === 0 ? <p className="empty-search">Nenhuma atividade registrada ainda.</p> : auditEvents.map((event) => <div className="activity-item" key={event.id}><span className={`activity-icon ${event.action === 'note_deleted' ? 'sand' : 'green'}`}>{event.action === 'project_approved' ? <Check size={14} /> : event.action === 'project_new_version' ? <FilePlus2 size={14} /> : <Activity size={14} />}</span><div><strong>{describeAuditEvent(event)}</strong><small>{new Date(event.created_at).toLocaleString('pt-BR')}</small></div></div>)}</section> : <div className="canvas-wrap"><div className="canvas-intro"><div><span className="canvas-kicker">MODELO DE PROJETO</span><h2>Project Model Canvas <span>·</span> <small>rascunho compartilhado</small></h2></div><div className="canvas-legend"><span><i className="legend-dot verified" /> validado</span><span><i className="legend-dot review" /> em revisão</span></div></div><div className="canvas-grid" data-manager={activeProject.manager_name} data-project={activeProject.name}>{filteredBlocks.map((block) => <article key={block.id} className={`canvas-block ${block.tone} ${selectedBlock === block.id ? 'selected' : ''}`} onClick={() => setSelectedBlock(block.id)}><div className="block-header"><div><span className="question-label">{block.question}</span><h3>{block.title}</h3></div><button className="block-menu" onClick={(event) => event.stopPropagation()}><MoreHorizontal size={16} /></button></div><div className="notes-list">{block.notes.map((note) => <div className={`note ${note.color}`} key={note.id} onClick={(event) => { event.stopPropagation(); setEditingNote({ blockId: block.id, note }) }}><p>{note.text}</p><div className="note-footer"><span className="note-author">{note.author}</span>{note.status === 'done' && <Check size={13} className="note-check" />}{note.status === 'review' && <span className="review-label">revisar</span>}</div></div>)}{block.notes.length === 0 && <span className="empty-search">Nenhuma nota encontrada</span>}</div>{canEditNotes && <button className="add-note" onClick={(event) => { event.stopPropagation(); setSelectedBlock(block.id); setIsAdding(true) }}><Plus size={14} /> adicionar nota</button>}</article>)}</div><div className="canvas-footer"><span><span className="pulse-dot" /> {realtimeStatus === 'online' ? 'Sincronização online' : 'Modo local'}</span></div></div>}
+        <section className="project-heading"><div><div className="eyebrow"><span className="status-dot" /> {activeProject.status}{isLocked && <span className="updated">· travado até nova versão</span>}</div><h1>{activeProject.name}</h1><p>Uma visão compartilhada para transformar ideias em projetos alinhados.</p></div>{canEdit && <div className="heading-actions"><button className="secondary-button" onClick={bumpVersion}><FilePlus2 size={16} /> Nova versão</button><button className="primary-button" onClick={approveProject} disabled={isLocked}><Check size={16} /> {isLocked ? 'Canvas aprovado' : 'Enviar para aprovação'}</button></div>}</section><section className="meta-row"><div className="people"><div className="avatar-stack"><span className="avatar-stack-item teal">{initials}</span></div><span>{displayName}</span></div><div className="meta-items"><button className={showComments ? 'meta-button active' : 'meta-button'} onClick={() => setShowComments(!showComments)}><MessageCircle size={15} /> comentários</button><span className="divider" /><button className="meta-button"><ShieldCheck size={15} /> versão {activeProject.version.toFixed(1)}</button></div></section>{showComments && <aside className="comments-panel"><div><span className="canvas-kicker">DISCUSSÃO ATIVA</span><strong>Comentários do canvas</strong></div><p>Os comentários abaixo ficam salvos apenas neste navegador.</p></aside>}<div className="toolbar"><div className="view-tabs"><button className={activeView === 'canvas' ? 'view-tab active' : 'view-tab'} onClick={() => setActiveView('canvas')}><BookOpen size={15} /> Canvas</button><button className={activeView === 'activity' ? 'view-tab active' : 'view-tab'} onClick={() => setActiveView('activity')}><Activity size={15} /> Atividade</button><button className={activeView === 'history' ? 'view-tab active' : 'view-tab'} onClick={() => setActiveView('history')}><History size={15} /> Versões</button></div><div className="toolbar-actions"><div className="search-field"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar no canvas" /></div><div className="filter-wrap"><button className={showFilters ? 'filter-button active' : 'filter-button'} onClick={() => setShowFilters(!showFilters)}><Filter size={15} /> Filtros</button>{showFilters && <div className="filter-menu"><span>FILTRAR NOTAS</span>{(['all', 'review', 'done'] as const).map((filter) => <button key={filter} className={activeFilter === filter ? 'filter-option selected' : 'filter-option'} onClick={() => { setActiveFilter(filter); setShowFilters(false) }}>{filter === 'all' ? 'Todas as notas' : filter === 'review' ? 'Em revisão' : 'Validadas'}{activeFilter === filter && <Check size={13} />}</button>)}</div>}</div>{canEdit && !isLocked && <button className="icon-button" onClick={openEditProject} title="Editar projeto"><MoreHorizontal size={18} /></button>}</div></div>{activeView === 'activity' ? <section className="activity-panel"><div className="activity-heading"><div><span className="canvas-kicker">HISTÓRICO DO PROJETO</span><h2>Atividade recente</h2></div><span className="activity-count">{auditEvents.length} eventos</span></div>{auditEvents.length === 0 ? <p className="empty-search">Nenhuma atividade registrada ainda.</p> : auditEvents.map((event) => <div className="activity-item" key={event.id}><span className={`activity-icon ${event.action === 'note_deleted' ? 'sand' : 'green'}`}>{event.action === 'project_approved' ? <Check size={14} /> : event.action === 'project_new_version' ? <FilePlus2 size={14} /> : <Activity size={14} />}</span><div><strong>{describeAuditEvent(event)}</strong><small>{new Date(event.created_at).toLocaleString('pt-BR')}</small></div></div>)}</section> : activeView === 'history' ? <section className="activity-panel"><div className="activity-heading"><div><span className="canvas-kicker">VERSÕES APROVADAS</span><h2>Histórico de versões</h2></div><span className="activity-count">{canvasVersions.length} versões</span></div>{canvasVersions.length === 0 ? <p className="empty-search">Nenhuma versão aprovada ainda.</p> : canvasVersions.map((version) => <div className="version-item" key={version.id}><button className="version-item-header" onClick={() => setExpandedVersionId(expandedVersionId === version.id ? null : version.id)}><span className="activity-icon green"><History size={14} /></span><div><strong>Versão {version.version.toFixed(1)} · {version.project_name}</strong><small>Aprovado por {version.approved_by_label} em {new Date(version.approved_at).toLocaleString('pt-BR')}</small></div><ChevronDown size={15} className={expandedVersionId === version.id ? 'chevron open' : 'chevron'} /></button>{expandedVersionId === version.id && <div className="version-snapshot">{version.notes_snapshot.length === 0 ? <p className="empty-search">Nenhuma nota registrada nesta versão.</p> : blockMeta.map((meta) => { const blockNotes = version.notes_snapshot.filter((note) => note.block_key === meta.id); return blockNotes.length === 0 ? null : <div className="version-block" key={meta.id}><span className="version-block-title">{meta.title}</span>{blockNotes.map((note, index) => <p key={index} className={`note ${note.color}`}>{note.text}<span className="note-author">{note.author}</span></p>)}</div> })}</div>}</div>)}</section> : <div className="canvas-wrap"><div className="canvas-intro"><div><span className="canvas-kicker">MODELO DE PROJETO</span><h2>Project Model Canvas <span>·</span> <small>rascunho compartilhado</small></h2></div><div className="canvas-legend"><span><i className="legend-dot verified" /> validado</span><span><i className="legend-dot review" /> em revisão</span></div></div><div className="canvas-grid" data-manager={activeProject.manager_name} data-project={activeProject.name}>{filteredBlocks.map((block) => <article key={block.id} className={`canvas-block ${block.tone} ${selectedBlock === block.id ? 'selected' : ''}`} onClick={() => setSelectedBlock(block.id)}><div className="block-header"><div><span className="question-label">{block.question}</span><h3>{block.title}</h3></div><button className="block-menu" onClick={(event) => event.stopPropagation()}><MoreHorizontal size={16} /></button></div><div className="notes-list">{block.notes.map((note) => <div className={`note ${note.color}`} key={note.id} onClick={(event) => { event.stopPropagation(); setEditingNote({ blockId: block.id, note }) }}><p>{note.text}</p><div className="note-footer"><span className="note-author">{note.author}</span>{note.status === 'done' && <Check size={13} className="note-check" />}{note.status === 'review' && <span className="review-label">revisar</span>}</div></div>)}{block.notes.length === 0 && <span className="empty-search">Nenhuma nota encontrada</span>}</div>{canEditNotes && <button className="add-note" onClick={(event) => { event.stopPropagation(); setSelectedBlock(block.id); setIsAdding(true) }}><Plus size={14} /> adicionar nota</button>}</article>)}</div><div className="canvas-footer"><span><span className="pulse-dot" /> {realtimeStatus === 'online' ? 'Sincronização online' : 'Modo local'}</span></div></div>}
         </>}
       </div></main>
       {activeNav !== 'Equipe' && activeProject && <button className="export-button" onClick={exportCanvas} title="Baixar backup do canvas"><ArrowDownToLine size={15} /> Exportar backup</button>}
       {activeNav !== 'Equipe' && showComments && <aside className="comment-composer"><div className="comment-composer-header"><span><MessageCircle size={15} /> Adicionar comentário</span><button className="icon-button" onClick={() => setShowComments(false)}><X size={15} /></button></div><div className="comment-list">{comments.map((comment) => <p key={comment.id}><b>{comment.author}</b>{comment.text}</p>)}</div>{canComment ? <><textarea value={newComment} onChange={(event) => setNewComment(event.target.value)} placeholder="Escreva uma observação para a equipe..." /><button className="primary-button comment-submit" onClick={addComment}><MessageCircle size={15} /> Comentar</button></> : <p className="empty-search">Apenas leitura para o seu papel.</p>}</aside>}
       {editingNote && <div className="composer-backdrop" onClick={() => setEditingNote(null)}><div className="composer" onClick={(event) => event.stopPropagation()}><button className="composer-close" onClick={() => setEditingNote(null)}><X size={17} /></button><span className="canvas-kicker">EDITAR NOTA</span><h2>{blocks.find((block) => block.id === editingNote.blockId)?.title}</h2><textarea autoFocus readOnly={!canEditNotes} value={editingNote.note.text} onChange={(event) => setEditingNote({ ...editingNote, note: { ...editingNote.note, text: event.target.value } })} />{canEditNotes ? <><div className="note-status-editor"><span>STATUS DA NOTA</span><button className={editingNote.note.status === 'review' || !editingNote.note.status ? 'status-choice selected' : 'status-choice'} onClick={() => setEditingNote({ ...editingNote, note: { ...editingNote.note, status: 'review' } })}>Em revisão</button><button className={editingNote.note.status === 'done' ? 'status-choice selected done' : 'status-choice'} onClick={() => setEditingNote({ ...editingNote, note: { ...editingNote.note, status: 'done' } })}>Validada</button></div><div className="composer-actions"><button className="danger-button" onClick={deleteEditedNote}>Excluir</button><button className="secondary-button" onClick={() => setEditingNote(null)}>Cancelar</button><button className="primary-button" onClick={saveEditedNote}><Check size={16} /> Salvar nota</button></div></> : <><p className="empty-search">{isLocked ? 'Projeto aprovado está travado. Crie uma nova versão para editar.' : 'Apenas leitura para o seu papel.'}</p><div className="composer-actions"><button className="secondary-button" onClick={() => setEditingNote(null)}>Fechar</button></div></>}</div></div>}
+      {isEditingProject && <div className="project-modal-backdrop" onClick={() => setIsEditingProject(false)}><form className="project-modal" onSubmit={(event) => { event.preventDefault(); saveProjectEdit() }} onClick={(event) => event.stopPropagation()}><span className="canvas-kicker">EDITAR PROJETO</span><h2>Editar projeto</h2><label>Nome do projeto<input value={editName} onChange={(event) => setEditName(event.target.value)} autoFocus /></label><label>Gerente do projeto<select value={editManagerUserId} onChange={(event) => setEditManagerUserId(event.target.value)}>{orgMembers.map((member) => <option key={member.userId} value={member.userId}>{memberLabel(member)}</option>)}</select></label><div className="project-modal-actions"><button type="button" className="secondary-button" onClick={() => setIsEditingProject(false)}>Cancelar</button><button type="submit" className="primary-button"><Check size={15} /> Salvar</button></div></form></div>}
       {isAdding && <div className="composer-backdrop" onClick={() => setIsAdding(false)}><div className="composer" onClick={(event) => event.stopPropagation()}><button className="composer-close" onClick={() => setIsAdding(false)}><X size={17} /></button><span className="canvas-kicker">NOVA NOTA</span><h2>{blocks.find((block) => block.id === selectedBlock)?.title}</h2><textarea autoFocus value={newNote} onChange={(event) => setNewNote(event.target.value)} placeholder="Escreva uma ideia curta e objetiva..." /><div className="composer-actions"><button className="secondary-button" onClick={() => setIsAdding(false)}>Cancelar</button><button className="primary-button" onClick={addNote}><Plus size={16} /> Adicionar nota</button></div></div></div>}
     </div>
   )
