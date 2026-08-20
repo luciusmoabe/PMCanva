@@ -1,13 +1,21 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Building2 } from 'lucide-react'
+import { Building2, Check } from 'lucide-react'
 import { createOrganization, type Membership } from './lib/organizationsRepository'
+import { acceptInvitation, listMyPendingInvitations, type InvitationWithOrgName } from './lib/invitationsRepository'
+import { roleLabels } from './lib/roleLabels'
 import { signOut } from './lib/authRepository'
 
 function OrgOnboarding({ onCreated }: { onCreated: (membership: Membership) => void }) {
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [invitations, setInvitations] = useState<InvitationWithOrgName[]>([])
+  const [acceptingId, setAcceptingId] = useState<string | null>(null)
+
+  useEffect(() => {
+    listMyPendingInvitations().then(setInvitations)
+  }, [])
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -24,6 +32,19 @@ function OrgOnboarding({ onCreated }: { onCreated: (membership: Membership) => v
     }
   }
 
+  async function handleAccept(invitationId: string) {
+    setError(null)
+    setAcceptingId(invitationId)
+    try {
+      const membership = await acceptInvitation(invitationId)
+      onCreated(membership)
+    } catch (acceptError) {
+      setError(acceptError instanceof Error ? acceptError.message : 'Nao foi possivel aceitar o convite.')
+    } finally {
+      setAcceptingId(null)
+    }
+  }
+
   return (
     <div className="auth-screen">
       <div className="auth-card">
@@ -31,6 +52,21 @@ function OrgOnboarding({ onCreated }: { onCreated: (membership: Membership) => v
         <span className="canvas-kicker">QUASE LA</span>
         <h1><Building2 size={22} /> Crie sua organizacao</h1>
         <p className="auth-subtitle">A organizacao reune os projetos e os colaboradores do seu time.</p>
+
+        {invitations.length > 0 && (
+          <div className="info-banner">
+            <strong>Voce foi convidado</strong>
+            {invitations.map((invitation) => (
+              <div className="invite-accept-row" key={invitation.id}>
+                <span>{invitation.organizationName} · {roleLabels[invitation.role]}</span>
+                <button type="button" className="secondary-button" disabled={acceptingId === invitation.id} onClick={() => handleAccept(invitation.id)}>
+                  <Check size={14} /> {acceptingId === invitation.id ? 'Aguarde...' : 'Aceitar'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <form onSubmit={handleSubmit}>
           <label>Nome da organizacao
             <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Ex.: Nucleo de Projetos" autoFocus required />

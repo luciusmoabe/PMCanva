@@ -91,3 +91,17 @@
 .error-banner { margin-top: 14px; border: 1px solid #eac3ba; border-radius: 6px; padding: 9px 11px; color: #9d4e43; background: #fbeeeb; font-size: 10px; line-height: 1.4; }
 .info-banner { margin-top: 14px; border: 1px solid #bcdccf; border-radius: 6px; padding: 9px 11px; color: #326f68; background: #eaf6f1; font-size: 10px; line-height: 1.4; }
 .page-error { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 16px; }
+.team-panel { margin-top: 19px; border: 1px solid #d9dcd7; border-radius: 8px; background: #fffefa; box-shadow: 0 7px 25px #3f4c3b0b; padding: 24px; }
+.team-section { margin-bottom: 28px; }
+.team-section:last-child { margin-bottom: 0; }
+.team-section h2 { display: flex; align-items: center; gap: 7px; margin: 5px 0 14px; color: #3e4a4b; font-family: Manrope, sans-serif; font-size: 15px; }
+.member-row, .invite-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #eeeeea; font-size: 11px; }
+.member-row:last-child, .invite-row:last-child { border-bottom: 0; }
+.member-info, .invite-info { display: flex; flex-direction: column; gap: 2px; }
+.member-info b, .invite-info b { color: #3e4a4b; font-size: 11px; }
+.member-info small, .invite-info small { color: #9aa3a2; font-size: 10px; }
+.role-badge { padding: 3px 8px; border-radius: 10px; background: #eef6f1; color: #3d8179; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
+.invite-form { display: flex; gap: 8px; align-items: end; margin: 12px 0; }
+.invite-form label { flex: 1; display: block; color: #75827e; font-size: 10px; font-weight: 600; }
+.invite-form input, .invite-form select { display: block; width: 100%; margin-top: 6px; border: 1px solid #dfe3de; border-radius: 5px; outline: 0; padding: 9px; color: #4e5b5a; background: #f8f8f4; font-size: 11px; box-sizing: border-box; }
+.invite-accept-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; }

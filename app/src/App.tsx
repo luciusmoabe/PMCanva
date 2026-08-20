@@ -14,8 +14,12 @@ import {
   type ProjectRow,
 } from './lib/projectsRepository'
 import type { Membership } from './lib/organizationsRepository'
+import { listComments, createComment, type CommentRow } from './lib/commentsRepository'
+import { listAuditEvents, type AuditEventRow } from './lib/auditRepository'
 import { signOut } from './lib/authRepository'
 import { getDisplayName, getInitials } from './lib/userDisplay'
+import { roleLabels } from './lib/roleLabels'
+import TeamPanel from './TeamPanel'
 import './App.css'
 
 type BlockMeta = { id: string; title: string; question: string; tone: string }
@@ -37,9 +41,19 @@ const blockMeta: BlockMeta[] = [
   { id: 'costs', title: 'Custos', question: 'QUANTO?', tone: 'purple' },
 ]
 
-const roleLabels: Record<Membership['role'], string> = { admin: 'Administrador', editor: 'Editor', commenter: 'Comentarista', reader: 'Leitor' }
-
 const navItems = [{ label: 'Visão geral', icon: LayoutDashboard }, { label: 'Meus projetos', icon: FolderKanban, count: '8' }, { label: 'Templates', icon: Grid2X2 }, { label: 'Equipe', icon: Users }]
+
+function describeAuditEvent(event: AuditEventRow): string {
+  const blockTitle = blockMeta.find((meta) => meta.id === event.block_key)?.title ?? event.block_key ?? ''
+  switch (event.action) {
+    case 'note_created': return `${event.actor_label} adicionou uma nota em ${blockTitle}`
+    case 'note_updated': return `${event.actor_label} editou uma nota em ${blockTitle}`
+    case 'note_deleted': return `${event.actor_label} excluiu uma nota em ${blockTitle}`
+    case 'project_approved': return `${event.actor_label} aprovou o projeto`
+    case 'project_new_version': return `${event.actor_label} criou uma nova versão`
+    default: return event.actor_label
+  }
+}
 
 function ProjectControls({ projects, activeProjectId, onSelect, onCreate }: { projects: ProjectRow[]; activeProjectId: string | null; onSelect: (id: string) => void; onCreate: (name: string, manager: string) => void }) {
   const [isOpen, setIsOpen] = useState(false)
@@ -55,6 +69,7 @@ function App({ session, organizationId, organizationName, role }: { session: Ses
   const displayName = getDisplayName(user)
   const initials = getInitials(displayName)
   const canEdit = role === 'admin' || role === 'editor'
+  const canComment = role === 'admin' || role === 'editor' || role === 'commenter'
 
   const [activeNav, setActiveNav] = useState('Meus projetos')
   const [projects, setProjects] = useState<ProjectRow[]>([])
@@ -67,7 +82,8 @@ function App({ session, organizationId, organizationName, role }: { session: Ses
   const [editingNote, setEditingNote] = useState<{ blockId: string; note: NoteRow } | null>(null)
   const [newNote, setNewNote] = useState('')
   const [showComments, setShowComments] = useState(false)
-  const [comments, setComments] = useState<string[]>(() => JSON.parse(localStorage.getItem('projectly-comments') ?? '[]') as string[])
+  const [comments, setComments] = useState<CommentRow[]>([])
+  const [auditEvents, setAuditEvents] = useState<AuditEventRow[]>([])
   const [newComment, setNewComment] = useState('')
   const [showFilters, setShowFilters] = useState(false)
   const [activeFilter, setActiveFilter] = useState<'all' | 'review' | 'done'>('all')
@@ -76,6 +92,8 @@ function App({ session, organizationId, organizationName, role }: { session: Ses
   const [actionError, setActionError] = useState<string | null>(null)
 
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? null
+  const isLocked = activeProject?.status === 'APROVADO'
+  const canEditNotes = canEdit && !isLocked
 
   const blocks: CanvasBlock[] = useMemo(
     () => blockMeta.map((meta) => ({ ...meta, notes: notes.filter((note) => note.block_key === meta.id) })),
@@ -98,24 +116,34 @@ function App({ session, organizationId, organizationName, role }: { session: Ses
   }, [organizationId])
 
   useEffect(() => {
-    if (!activeProjectId) { setNotes([]); return }
+    if (!activeProjectId) { setNotes([]); setComments([]); setAuditEvents([]); return }
     let isMounted = true
     listNotes(activeProjectId).then((result) => { if (isMounted) setNotes(result) })
+    listComments(activeProjectId).then((result) => { if (isMounted) setComments(result) })
+    listAuditEvents(activeProjectId).then((result) => { if (isMounted) setAuditEvents(result) })
     const unsubscribe = subscribeToProject(activeProjectId, {
       onNoteInsert: (note) => setNotes((current) => (current.some((item) => item.id === note.id) ? current : [...current, note])),
       onNoteUpdate: (note) => setNotes((current) => current.map((item) => (item.id === note.id ? note : item))),
       onNoteDelete: (noteId) => setNotes((current) => current.filter((item) => item.id !== noteId)),
       onProjectUpdate: (project) => setProjects((current) => current.map((item) => (item.id === project.id ? project : item))),
+      onCommentInsert: (comment) => setComments((current) => (current.some((item) => item.id === comment.id) ? current : [...current, comment])),
     }, setRealtimeStatus)
     return () => { isMounted = false; unsubscribe() }
   }, [activeProjectId])
 
-  useEffect(() => { localStorage.setItem('projectly-comments', JSON.stringify(comments)) }, [comments])
+  function refreshAuditEvents() {
+    if (activeProjectId) listAuditEvents(activeProjectId).then(setAuditEvents)
+  }
 
-  function addComment() {
-    if (!newComment.trim()) return
-    setComments((current) => [...current, newComment.trim()])
-    setNewComment('')
+  async function addComment() {
+    if (!newComment.trim() || !activeProjectId) return
+    try {
+      const comment = await createComment(activeProjectId, newComment.trim(), initials)
+      setComments((current) => [...current, comment])
+      setNewComment('')
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Não foi possível adicionar o comentário.')
+    }
   }
 
   function exportCanvas() {
@@ -136,6 +164,7 @@ function App({ session, organizationId, organizationName, role }: { session: Ses
       setNotes((current) => [...current, note])
       setNewNote('')
       setIsAdding(false)
+      refreshAuditEvents()
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Não foi possível adicionar a nota.')
     }
@@ -148,6 +177,7 @@ function App({ session, organizationId, organizationName, role }: { session: Ses
       await updateNote(id, { text, status })
       setNotes((current) => current.map((note) => (note.id === id ? { ...note, text, status } : note)))
       setEditingNote(null)
+      refreshAuditEvents()
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Não foi possível salvar a nota.')
     }
@@ -160,6 +190,7 @@ function App({ session, organizationId, organizationName, role }: { session: Ses
       await deleteNote(id)
       setNotes((current) => current.filter((note) => note.id !== id))
       setEditingNote(null)
+      refreshAuditEvents()
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Não foi possível excluir a nota.')
     }
@@ -185,6 +216,7 @@ function App({ session, organizationId, organizationName, role }: { session: Ses
     try {
       await updateProject(activeProject.id, { version: nextVersion, status: 'RASCUNHO' })
       setProjects((current) => current.map((project) => (project.id === activeProject.id ? { ...project, version: nextVersion, status: 'RASCUNHO' } : project)))
+      refreshAuditEvents()
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Não foi possível criar uma nova versão.')
     }
@@ -195,25 +227,26 @@ function App({ session, organizationId, organizationName, role }: { session: Ses
     try {
       await updateProject(activeProject.id, { status: 'APROVADO' })
       setProjects((current) => current.map((project) => (project.id === activeProject.id ? { ...project, status: 'APROVADO' } : project)))
+      refreshAuditEvents()
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Não foi possível aprovar o projeto.')
     }
   }
 
   return (
-    <div className="app-shell"><ProjectControls projects={projects} activeProjectId={activeProjectId} onSelect={selectProject} onCreate={createProject} />
+    <div className="app-shell">{activeNav !== 'Equipe' && <ProjectControls projects={projects} activeProjectId={activeProjectId} onSelect={selectProject} onCreate={createProject} />}
       <aside className="sidebar"><div className="brand"><span className="brand-mark">P</span><span>projectly</span></div><div className="workspace-switcher"><span className="workspace-avatar">{organizationName.slice(0, 1).toUpperCase() || 'O'}</span><span><b>{organizationName}</b><small>Workspace principal</small></span><ChevronDown size={15} /></div><nav className="main-nav" aria-label="Navegação principal"><span className="nav-caption">WORKSPACE</span>{navItems.map(({ label, icon: Icon, count }) => <button key={label} className={activeNav === label ? 'nav-item active' : 'nav-item'} onClick={() => setActiveNav(label)}><Icon size={17} /><span>{label}</span>{count && <em>{count}</em>}</button>)}<span className="nav-caption nav-caption-spaced">GESTÃO</span><button className="nav-item"><Activity size={17} /><span>Atividade</span><i className="unread-dot" /></button><button className="nav-item"><Archive size={17} /><span>Arquivados</span></button></nav><div className="sidebar-bottom"><div className="upgrade-card"><Sparkles size={16} /><div><strong>Plano Team</strong><small>{projects.length} projetos ativos</small></div><ArrowUpRight size={14} /></div><button className="nav-item"><Settings size={17} /><span>Configurações</span></button><button className="user-card" onClick={() => void signOut()} title="Sair"><span className="avatar">{initials}</span><span><b>{displayName}</b><small>{roleLabels[role]}</small></span><MoreHorizontal size={16} /></button></div></aside>
       <main className="main-content"><header className="topbar"><div className="breadcrumbs"><span>Meus projetos</span><span>/</span><b>{activeProject?.name ?? 'Sem projeto'}</b></div><div className="top-actions"><button className="icon-button" title="Ajuda"><CircleHelp size={18} /></button><button className="icon-button notification" title="Notificações"><Bell size={18} /><i /></button><span className="top-avatar">{initials}</span></div></header><div className="page-content">
         {actionError && <div className="error-banner page-error"><span>{actionError}</span><button className="icon-button" onClick={() => setActionError(null)}><X size={14} /></button></div>}
-        {isProjectsLoading ? <p className="empty-search">Carregando projetos...</p> : !activeProject ? (
+        {activeNav === 'Equipe' ? <TeamPanel organizationId={organizationId} role={role} /> : isProjectsLoading ? <p className="empty-search">Carregando projetos...</p> : !activeProject ? (
           <section className="project-heading"><div><span className="canvas-kicker">COMECE POR AQUI</span><h1>Nenhum projeto ainda</h1><p>Use "Novo projeto" no canto superior esquerdo para criar o primeiro canvas da organização.</p></div></section>
         ) : <>
-        <section className="project-heading"><div><div className="eyebrow"><span className="status-dot" /> {activeProject.status}</div><h1>{activeProject.name}</h1><p>Uma visão compartilhada para transformar ideias em projetos alinhados.</p></div>{canEdit && <div className="heading-actions"><button className="secondary-button" onClick={bumpVersion}><FilePlus2 size={16} /> Nova versão</button><button className="primary-button" onClick={approveProject}><Check size={16} /> {activeProject.status === 'APROVADO' ? 'Canvas aprovado' : 'Enviar para aprovação'}</button></div>}</section><section className="meta-row"><div className="people"><div className="avatar-stack"><span className="avatar-stack-item teal">{initials}</span></div><span>{displayName}</span></div><div className="meta-items"><button className={showComments ? 'meta-button active' : 'meta-button'} onClick={() => setShowComments(!showComments)}><MessageCircle size={15} /> comentários</button><span className="divider" /><button className="meta-button"><ShieldCheck size={15} /> versão {activeProject.version.toFixed(1)}</button></div></section>{showComments && <aside className="comments-panel"><div><span className="canvas-kicker">DISCUSSÃO ATIVA</span><strong>Comentários do canvas</strong></div><p>Os comentários abaixo ficam salvos apenas neste navegador.</p></aside>}<div className="toolbar"><div className="view-tabs"><button className={showActivity ? 'view-tab' : 'view-tab active'} onClick={() => setShowActivity(false)}><BookOpen size={15} /> Canvas</button><button className={showActivity ? 'view-tab active' : 'view-tab'} onClick={() => setShowActivity(true)}><Activity size={15} /> Atividade</button></div><div className="toolbar-actions"><div className="search-field"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar no canvas" /></div><div className="filter-wrap"><button className={showFilters ? 'filter-button active' : 'filter-button'} onClick={() => setShowFilters(!showFilters)}><Filter size={15} /> Filtros</button>{showFilters && <div className="filter-menu"><span>FILTRAR NOTAS</span>{(['all', 'review', 'done'] as const).map((filter) => <button key={filter} className={activeFilter === filter ? 'filter-option selected' : 'filter-option'} onClick={() => { setActiveFilter(filter); setShowFilters(false) }}>{filter === 'all' ? 'Todas as notas' : filter === 'review' ? 'Em revisão' : 'Validadas'}{activeFilter === filter && <Check size={13} />}</button>)}</div>}</div><button className="icon-button"><MoreHorizontal size={18} /></button></div></div>{showActivity ? <section className="activity-panel"><div className="activity-heading"><div><span className="canvas-kicker">HISTÓRICO DO PROJETO</span><h2>Atividade recente</h2></div></div><p className="empty-search">Trilha de auditoria ainda não implementada nesta versão.</p></section> : <div className="canvas-wrap"><div className="canvas-intro"><div><span className="canvas-kicker">MODELO DE PROJETO</span><h2>Project Model Canvas <span>·</span> <small>rascunho compartilhado</small></h2></div><div className="canvas-legend"><span><i className="legend-dot verified" /> validado</span><span><i className="legend-dot review" /> em revisão</span></div></div><div className="canvas-grid" data-manager={activeProject.manager_name} data-project={activeProject.name}>{filteredBlocks.map((block) => <article key={block.id} className={`canvas-block ${block.tone} ${selectedBlock === block.id ? 'selected' : ''}`} onClick={() => setSelectedBlock(block.id)}><div className="block-header"><div><span className="question-label">{block.question}</span><h3>{block.title}</h3></div><button className="block-menu" onClick={(event) => event.stopPropagation()}><MoreHorizontal size={16} /></button></div><div className="notes-list">{block.notes.map((note) => <div className={`note ${note.color}`} key={note.id} onClick={(event) => { event.stopPropagation(); setEditingNote({ blockId: block.id, note }) }}><p>{note.text}</p><div className="note-footer"><span className="note-author">{note.author}</span>{note.status === 'done' && <Check size={13} className="note-check" />}{note.status === 'review' && <span className="review-label">revisar</span>}</div></div>)}{block.notes.length === 0 && <span className="empty-search">Nenhuma nota encontrada</span>}</div>{canEdit && <button className="add-note" onClick={(event) => { event.stopPropagation(); setSelectedBlock(block.id); setIsAdding(true) }}><Plus size={14} /> adicionar nota</button>}</article>)}</div><div className="canvas-footer"><span><span className="pulse-dot" /> {realtimeStatus === 'online' ? 'Sincronização online' : 'Modo local'}</span></div></div>}
+        <section className="project-heading"><div><div className="eyebrow"><span className="status-dot" /> {activeProject.status}{isLocked && <span className="updated">· travado até nova versão</span>}</div><h1>{activeProject.name}</h1><p>Uma visão compartilhada para transformar ideias em projetos alinhados.</p></div>{canEdit && <div className="heading-actions"><button className="secondary-button" onClick={bumpVersion}><FilePlus2 size={16} /> Nova versão</button><button className="primary-button" onClick={approveProject} disabled={isLocked}><Check size={16} /> {isLocked ? 'Canvas aprovado' : 'Enviar para aprovação'}</button></div>}</section><section className="meta-row"><div className="people"><div className="avatar-stack"><span className="avatar-stack-item teal">{initials}</span></div><span>{displayName}</span></div><div className="meta-items"><button className={showComments ? 'meta-button active' : 'meta-button'} onClick={() => setShowComments(!showComments)}><MessageCircle size={15} /> comentários</button><span className="divider" /><button className="meta-button"><ShieldCheck size={15} /> versão {activeProject.version.toFixed(1)}</button></div></section>{showComments && <aside className="comments-panel"><div><span className="canvas-kicker">DISCUSSÃO ATIVA</span><strong>Comentários do canvas</strong></div><p>Os comentários abaixo ficam salvos apenas neste navegador.</p></aside>}<div className="toolbar"><div className="view-tabs"><button className={showActivity ? 'view-tab' : 'view-tab active'} onClick={() => setShowActivity(false)}><BookOpen size={15} /> Canvas</button><button className={showActivity ? 'view-tab active' : 'view-tab'} onClick={() => setShowActivity(true)}><Activity size={15} /> Atividade</button></div><div className="toolbar-actions"><div className="search-field"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar no canvas" /></div><div className="filter-wrap"><button className={showFilters ? 'filter-button active' : 'filter-button'} onClick={() => setShowFilters(!showFilters)}><Filter size={15} /> Filtros</button>{showFilters && <div className="filter-menu"><span>FILTRAR NOTAS</span>{(['all', 'review', 'done'] as const).map((filter) => <button key={filter} className={activeFilter === filter ? 'filter-option selected' : 'filter-option'} onClick={() => { setActiveFilter(filter); setShowFilters(false) }}>{filter === 'all' ? 'Todas as notas' : filter === 'review' ? 'Em revisão' : 'Validadas'}{activeFilter === filter && <Check size={13} />}</button>)}</div>}</div><button className="icon-button"><MoreHorizontal size={18} /></button></div></div>{showActivity ? <section className="activity-panel"><div className="activity-heading"><div><span className="canvas-kicker">HISTÓRICO DO PROJETO</span><h2>Atividade recente</h2></div><span className="activity-count">{auditEvents.length} eventos</span></div>{auditEvents.length === 0 ? <p className="empty-search">Nenhuma atividade registrada ainda.</p> : auditEvents.map((event) => <div className="activity-item" key={event.id}><span className={`activity-icon ${event.action === 'note_deleted' ? 'sand' : 'green'}`}>{event.action === 'project_approved' ? <Check size={14} /> : event.action === 'project_new_version' ? <FilePlus2 size={14} /> : <Activity size={14} />}</span><div><strong>{describeAuditEvent(event)}</strong><small>{new Date(event.created_at).toLocaleString('pt-BR')}</small></div></div>)}</section> : <div className="canvas-wrap"><div className="canvas-intro"><div><span className="canvas-kicker">MODELO DE PROJETO</span><h2>Project Model Canvas <span>·</span> <small>rascunho compartilhado</small></h2></div><div className="canvas-legend"><span><i className="legend-dot verified" /> validado</span><span><i className="legend-dot review" /> em revisão</span></div></div><div className="canvas-grid" data-manager={activeProject.manager_name} data-project={activeProject.name}>{filteredBlocks.map((block) => <article key={block.id} className={`canvas-block ${block.tone} ${selectedBlock === block.id ? 'selected' : ''}`} onClick={() => setSelectedBlock(block.id)}><div className="block-header"><div><span className="question-label">{block.question}</span><h3>{block.title}</h3></div><button className="block-menu" onClick={(event) => event.stopPropagation()}><MoreHorizontal size={16} /></button></div><div className="notes-list">{block.notes.map((note) => <div className={`note ${note.color}`} key={note.id} onClick={(event) => { event.stopPropagation(); setEditingNote({ blockId: block.id, note }) }}><p>{note.text}</p><div className="note-footer"><span className="note-author">{note.author}</span>{note.status === 'done' && <Check size={13} className="note-check" />}{note.status === 'review' && <span className="review-label">revisar</span>}</div></div>)}{block.notes.length === 0 && <span className="empty-search">Nenhuma nota encontrada</span>}</div>{canEditNotes && <button className="add-note" onClick={(event) => { event.stopPropagation(); setSelectedBlock(block.id); setIsAdding(true) }}><Plus size={14} /> adicionar nota</button>}</article>)}</div><div className="canvas-footer"><span><span className="pulse-dot" /> {realtimeStatus === 'online' ? 'Sincronização online' : 'Modo local'}</span></div></div>}
         </>}
       </div></main>
-      {activeProject && <button className="export-button" onClick={exportCanvas} title="Baixar backup do canvas"><ArrowDownToLine size={15} /> Exportar backup</button>}
-      {showComments && <aside className="comment-composer"><div className="comment-composer-header"><span><MessageCircle size={15} /> Adicionar comentário</span><button className="icon-button" onClick={() => setShowComments(false)}><X size={15} /></button></div><div className="comment-list">{comments.map((comment, index) => <p key={`${comment}-${index}`}><b>{initials}</b>{comment}</p>)}</div><textarea value={newComment} onChange={(event) => setNewComment(event.target.value)} placeholder="Escreva uma observação para a equipe..." /><button className="primary-button comment-submit" onClick={addComment}><MessageCircle size={15} /> Comentar</button></aside>}
-      {editingNote && <div className="composer-backdrop" onClick={() => setEditingNote(null)}><div className="composer" onClick={(event) => event.stopPropagation()}><button className="composer-close" onClick={() => setEditingNote(null)}><X size={17} /></button><span className="canvas-kicker">EDITAR NOTA</span><h2>{blocks.find((block) => block.id === editingNote.blockId)?.title}</h2><textarea autoFocus value={editingNote.note.text} onChange={(event) => setEditingNote({ ...editingNote, note: { ...editingNote.note, text: event.target.value } })} /><div className="note-status-editor"><span>STATUS DA NOTA</span><button className={editingNote.note.status === 'review' || !editingNote.note.status ? 'status-choice selected' : 'status-choice'} onClick={() => setEditingNote({ ...editingNote, note: { ...editingNote.note, status: 'review' } })}>Em revisão</button><button className={editingNote.note.status === 'done' ? 'status-choice selected done' : 'status-choice'} onClick={() => setEditingNote({ ...editingNote, note: { ...editingNote.note, status: 'done' } })}>Validada</button></div><div className="composer-actions"><button className="danger-button" onClick={deleteEditedNote}>Excluir</button><button className="secondary-button" onClick={() => setEditingNote(null)}>Cancelar</button><button className="primary-button" onClick={saveEditedNote}><Check size={16} /> Salvar nota</button></div></div></div>}
+      {activeNav !== 'Equipe' && activeProject && <button className="export-button" onClick={exportCanvas} title="Baixar backup do canvas"><ArrowDownToLine size={15} /> Exportar backup</button>}
+      {activeNav !== 'Equipe' && showComments && <aside className="comment-composer"><div className="comment-composer-header"><span><MessageCircle size={15} /> Adicionar comentário</span><button className="icon-button" onClick={() => setShowComments(false)}><X size={15} /></button></div><div className="comment-list">{comments.map((comment) => <p key={comment.id}><b>{comment.author}</b>{comment.text}</p>)}</div>{canComment ? <><textarea value={newComment} onChange={(event) => setNewComment(event.target.value)} placeholder="Escreva uma observação para a equipe..." /><button className="primary-button comment-submit" onClick={addComment}><MessageCircle size={15} /> Comentar</button></> : <p className="empty-search">Apenas leitura para o seu papel.</p>}</aside>}
+      {editingNote && <div className="composer-backdrop" onClick={() => setEditingNote(null)}><div className="composer" onClick={(event) => event.stopPropagation()}><button className="composer-close" onClick={() => setEditingNote(null)}><X size={17} /></button><span className="canvas-kicker">EDITAR NOTA</span><h2>{blocks.find((block) => block.id === editingNote.blockId)?.title}</h2><textarea autoFocus readOnly={!canEditNotes} value={editingNote.note.text} onChange={(event) => setEditingNote({ ...editingNote, note: { ...editingNote.note, text: event.target.value } })} />{canEditNotes ? <><div className="note-status-editor"><span>STATUS DA NOTA</span><button className={editingNote.note.status === 'review' || !editingNote.note.status ? 'status-choice selected' : 'status-choice'} onClick={() => setEditingNote({ ...editingNote, note: { ...editingNote.note, status: 'review' } })}>Em revisão</button><button className={editingNote.note.status === 'done' ? 'status-choice selected done' : 'status-choice'} onClick={() => setEditingNote({ ...editingNote, note: { ...editingNote.note, status: 'done' } })}>Validada</button></div><div className="composer-actions"><button className="danger-button" onClick={deleteEditedNote}>Excluir</button><button className="secondary-button" onClick={() => setEditingNote(null)}>Cancelar</button><button className="primary-button" onClick={saveEditedNote}><Check size={16} /> Salvar nota</button></div></> : <><p className="empty-search">{isLocked ? 'Projeto aprovado está travado. Crie uma nova versão para editar.' : 'Apenas leitura para o seu papel.'}</p><div className="composer-actions"><button className="secondary-button" onClick={() => setEditingNote(null)}>Fechar</button></div></>}</div></div>}
       {isAdding && <div className="composer-backdrop" onClick={() => setIsAdding(false)}><div className="composer" onClick={(event) => event.stopPropagation()}><button className="composer-close" onClick={() => setIsAdding(false)}><X size={17} /></button><span className="canvas-kicker">NOVA NOTA</span><h2>{blocks.find((block) => block.id === selectedBlock)?.title}</h2><textarea autoFocus value={newNote} onChange={(event) => setNewNote(event.target.value)} placeholder="Escreva uma ideia curta e objetiva..." /><div className="composer-actions"><button className="secondary-button" onClick={() => setIsAdding(false)}>Cancelar</button><button className="primary-button" onClick={addNote}><Plus size={16} /> Adicionar nota</button></div></div></div>}
     </div>
   )

@@ -8,7 +8,13 @@ O canvas nao sera apenas um formulario. Cada projeto tera um modelo vivo, com bl
 
 ## 2. Status atual do desenvolvimento
 
-Situacao registrada em 20/08/2026. O app agora tem autenticacao real e multi-tenancy de verdade: cada organizacao isola seus proprios projetos e notas via RLS do Supabase, validado ponta a ponta (cadastro, criacao de organizacao, criacao de projeto, notas em tempo real e isolamento entre duas organizacoes diferentes, tudo testado num navegador real). Isso fecha a lacuna que era o maior risco do projeto (ver revisao anterior desta secao). O que falta agora e sobretudo governanca (versionamento real, aprovacao, auditoria) e colaboracao avancada (convites, comentarios sincronizados), nao mais a fundacao de identidade.
+Situacao registrada em 20/08/2026. O app tem autenticacao real e multi-tenancy de verdade: cada organizacao isola seus proprios projetos e notas via RLS do Supabase, validado ponta a ponta (cadastro, criacao de organizacao, criacao de projeto, notas em tempo real e isolamento entre duas organizacoes diferentes). Na mesma data, entrou tambem convite de membros por e-mail (sem envio real de e-mail — ver abaixo) e comentarios sincronizados por projeto, substituindo o convite manual via banco e a lista de comentarios presa ao `localStorage`. Testado com quatro contas reais (admin, editor convidado, leitor convidado, estranho sem convite) confirmando papeis, isolamento de convites e sincronizacao em tempo real de notas e comentarios entre usuarios diferentes — nao so entre abas da mesma conta, como na rodada anterior.
+
+Esse teste tambem revelou e corrigiu um bug real de uma rodada anterior: `listMyMemberships()` nao filtrava pela linha do proprio usuario, so pela regra de RLS "e membro dessa organizacao" — que corretamente deixa um membro ver as linhas de `memberships` de *todos* os colegas da mesma org (necessario para outras funcionalidades), mas fazia essa funcao especifica devolver a primeira linha que encontrasse para aquela organizacao, nao necessariamente a do usuario logado. Com uma organizacao de um membro so (o unico caso testado ate entao) isso nunca dava errado; com dois membros, o segundo usuario podia acabar vendo o papel do primeiro. Corrigido filtrando explicitamente por `user_id` no cliente.
+
+Ainda no dia 20/08/2026, entraram duas pecas de governanca: **projeto aprovado agora trava de verdade** (trigger + RLS no banco impedem criar, editar ou excluir nota, e impedem editar qualquer campo do projeto, enquanto o status for `APROVADO`; "Nova versão" e o unico jeito de destravar) e **trilha de auditoria real** (tabela `audit_events`, escrita so por triggers — nunca pelo cliente — registrando quem criou/editou/excluiu cada nota e quem aprovou/reabriu o projeto, substituindo o aviso "ainda nao implementado" na aba Atividade). Ambos validados tentando contornar pela API direto (sem passar pela UI) e confirmando que o banco rejeita.
+
+O que falta agora e sobretudo snapshot imutavel de versao (guardar uma copia separada do conteudo aprovado, nao so travar o atual) e aprovacao por bloco/multiplos stakeholders — a fundacao de identidade, a colaboracao basica e o travamento de governanca ja estao de pe.
 
 **Stack em uso**
 
@@ -22,21 +28,26 @@ Situacao registrada em 20/08/2026. O app agora tem autenticacao real e multi-ten
 
 - Cadastro e login por e-mail+senha e por link magico; sessao gerenciada pelo Supabase Auth.
 - Criacao de organizacao no primeiro acesso (`create_organization_with_owner`), que ja registra quem criou como `admin`.
-- Multi-tenancy real: `organizations`, `memberships` (papeis admin/editor/commenter/reader), `projects` e `notes` no Postgres, com RLS baseada em `auth.uid()` — uma organizacao nao ve projetos nem notas de outra. Validado criando duas organizacoes distintas e confirmando que uma nao enxerga os dados da outra.
+- Multi-tenancy real: `organizations`, `memberships` (papeis admin/editor/commenter/reader), `projects`, `notes`, `comments` e `invitations` no Postgres, com RLS baseada em `auth.uid()` — uma organizacao nao ve projetos, notas nem convites de outra. Validado criando duas organizacoes distintas e confirmando que uma nao enxerga os dados da outra.
+- Convite de membros por e-mail (tela "Equipe" na sidebar): admin cadastra e-mail+papel, a pessoa convidada ve o convite ao logar/cadastrar com aquele e-mail e pode aceitar — entra na organizacao com o papel definido. **Nao envia e-mail de verdade** (sem service-role key nem infraestrutura de SMTP/Resend/Edge Functions ainda): o admin avisa a pessoa por fora. Admin tambem ve a lista de membros e pode revogar convites pendentes.
 - Os 13 blocos do Project Model Canvas, agrupados pelas 5 perguntas do metodo e posicionados no layout classico do livro.
-- Cartoes/notas: criar, editar, excluir, marcar como "validada" ou "em revisao", busca por texto e filtro por status — agora persistidos linha a linha no banco (nao mais um blob JSONB), com o autor sendo o nome/iniciais do usuario logado de verdade.
-- Sincronizacao em tempo real por projeto (nao mais um unico canal fixo de demonstracao): uma nota criada em uma aba aparece na outra sem reload, validado com duas abas da mesma conta.
+- Cartoes/notas: criar, editar, excluir, marcar como "validada" ou "em revisao", busca por texto e filtro por status — persistidos linha a linha no banco, com o autor sendo o nome/iniciais do usuario logado de verdade.
+- Comentarios por projeto: persistidos no banco (tabela `comments`) e sincronizados em tempo real entre usuarios diferentes da mesma organizacao — ainda em nivel de projeto, nao por nota/bloco (decisao deliberada, ver "Lacunas" abaixo).
+- Papeis com efeito real na UI e no banco: `reader` nao ve botao de adicionar nota nem de comentar (e a escrita seria rejeitada pela RLS mesmo se tentasse pela API direto); so `admin` ve o formulario de convite na tela Equipe.
+- Sincronizacao em tempo real por projeto (notas, projeto e comentarios no mesmo canal): uma mudanca feita por um usuario aparece para outro usuario da mesma organizacao sem reload, validado entre contas diferentes (nao so entre abas da mesma conta).
 - Exportacao de um backup em JSON do canvas (blocos, comentarios, metadados).
 - Criacao e troca de projetos dentro da organizacao ativa.
+- Projeto `APROVADO` fica travado de verdade: um trigger no banco (`enforce_project_lock`) bloqueia qualquer update no projeto que mantenha o status aprovado, e a RLS de `notes` passa a rejeitar insert/update/delete enquanto o projeto do dono da nota estiver aprovado. "Nova versão" continua liberado (e o unico jeito de destravar). Comentarios continuam liberados mesmo com o projeto aprovado, de proposito.
+- Trilha de auditoria real: tabela `audit_events`, escrita exclusivamente por triggers (`log_note_audit_event`, `log_project_audit_event`) — o cliente nao tem policy de insert, testado tentando inserir direto pela API e confirmando rejeicao. A aba "Atividade" mostra criacao/edicao/exclusao de nota e aprovacao/nova versao do projeto, com autor real e timestamp, mais recente primeiro.
 
 **Lacunas que continuam**
 
-- Convite de membros por e-mail ainda nao existe — hoje so quem cria a organizacao vira membro (`admin`); adicionar `editor`/`commenter`/`reader` exige insercao manual na tabela `memberships`.
+- Convite so por e-mail cadastrado manualmente pelo admin, sem link de convite com expiracao (a secao 4.3 do plano original pede "convite por link"; o que existe e mais simples: um registro pendente por e-mail).
 - Recuperacao de senha, MFA e revogacao de sessao ainda nao foram implementadas.
-- Comentarios continuam uma lista unica por projeto salva so em `localStorage`, sem vinculo com nota/bloco, sem mencoes, sem resolucao e sem sincronizacao entre usuarios — decisao deliberada de manter fora de escopo nesta rodada.
+- Comentarios continuam em nivel de projeto (nao por nota/bloco), sem mencoes e sem resolucao — decisao deliberada de manter fora de escopo nesta rodada tambem, para nao desenhar uma UI de threads que ninguem pediu ainda.
 - "Versao" e apenas um numero decimal incrementado por um botao; nao ha snapshot imutavel, historico nem comparacao entre versoes.
 - "Aprovar" e um unico botao que muda o status do projeto; nao existe aprovacao por bloco, por stakeholder, nem evento de auditoria associado.
-- O painel de "Atividade" agora mostra um aviso honesto de que a trilha de auditoria ainda nao foi implementada (antes mostrava eventos fixos ilustrativos atribuidos a pessoas ficticias).
+- O painel de "Atividade" mostra um aviso honesto de que a trilha de auditoria ainda nao foi implementada (nao mostra mais eventos fixos ilustrativos atribuidos a pessoas ficticias).
 - Exportacao gera apenas JSON; falta PDF e PNG previstos no MVP.
 - Nao ha sessao facilitada, presenca de colaboradores, nem qualquer integracao externa.
 - Ainda nao existe camada de API propria: o front-end fala direto com o Supabase, com autorizacao inteira delegada a RLS.
@@ -63,16 +74,16 @@ O sistema deve favorecer a construcao coletiva, a visualizacao do todo e a verif
 
 Cada organizacao deve possuir papeis configuraveis, grupos e escopos de acesso por projeto.
 
-*Os papeis `admin`/`editor`/`commenter`/`reader` ja existem como coluna real em `memberships` e a RLS ja distingue leitura (qualquer membro) de escrita (so `admin`/`editor`). Na pratica, porem, hoje toda organizacao tem um unico membro — quem a criou, sempre `admin` — porque o convite de novos membros ainda nao tem UI. Ver secao 2.*
+*Os papeis `admin`/`editor`/`commenter`/`reader` existem como coluna real em `memberships`, a RLS distingue leitura (qualquer membro) de escrita de notas (`admin`/`editor`) e de comentarios (`admin`/`editor`/`commenter`), e agora e possivel colocar outra pessoa numa organizacao com qualquer um desses papeis via convite (secao 2). Testado com um `editor` e um `reader` convidados: o `reader` nao consegue escrever nota nem comentario pela UI (nem pela API direta, ja que a RLS rejeita).*
 
 ## 5. Escopo funcional do MVP
 
 ### 5.1 Organizacoes e acesso
 
-- [PARCIAL] Cadastro da organizacao e convite de usuarios por e-mail — criar a organizacao funciona; convidar outros usuarios ainda nao tem UI (exige insercao manual em `memberships`).
+- [PARCIAL] Cadastro da organizacao e convite de usuarios por e-mail — ambos funcionam; o convite nao envia e-mail de verdade (admin avisa por fora) e nao tem expiracao/link, so um registro pendente que a pessoa ve ao logar com aquele e-mail.
 - [PARCIAL] Login, recuperacao de acesso, MFA opcional e sessoes revogaveis — login por e-mail+senha e link magico funcionam; recuperacao de senha, MFA e revogacao de sessao ainda faltam.
 - [FEITO] Multi-tenancy com isolamento rigoroso por `organization_id` — RLS baseada em `auth.uid()` e membership, validada criando duas organizacoes e confirmando isolamento total.
-- [PARCIAL] Papeis: administrador, editor, comentarista e leitor — enum e RLS ja existem e distinguem leitura de escrita; hoje so o papel `admin` e atribuido na pratica (quem cria a organizacao), pois nao ha convite de membros com outros papeis.
+- [FEITO] Papeis: administrador, editor, comentarista e leitor — enum e RLS distinguem leitura, escrita de notas e escrita de comentarios; validado convidando um `editor` e um `reader` reais e confirmando que o `reader` fica travado na escrita (UI esconde os botoes, e a RLS rejeitaria mesmo se tentasse pela API).
 
 ### 5.2 Projetos e canvas
 
@@ -85,17 +96,17 @@ Cada organizacao deve possuir papeis configuraveis, grupos e escopos de acesso p
 
 ### 5.3 Colaboracao
 
-- [PARCIAL] Edicao concorrente — sincronizacao via Supabase Realtime por linha (insert/update/delete), agora funcionando em qualquer projeto de qualquer organizacao, nao so num canvas de demonstracao; ainda e "ultima escrita vence", sem presenca nem resolucao de conflito.
-- [PARCIAL] Comentarios — existe um painel, mas e uma lista unica por projeto, sem vinculo com nota/bloco, sem mencoes ou resolucao, salva apenas no `localStorage` do navegador (fora de escopo nesta rodada, ver secao 2).
+- [PARCIAL] Edicao concorrente — sincronizacao via Supabase Realtime por linha (insert/update/delete), funcionando em qualquer projeto de qualquer organizacao entre usuarios diferentes; ainda e "ultima escrita vence", sem presenca nem resolucao de conflito.
+- [PARCIAL] Comentarios — persistidos no banco e sincronizados em tempo real entre usuarios, gated por papel (`admin`/`editor`/`commenter` escrevem, `reader` so le); ainda em nivel de projeto, sem vinculo com nota/bloco, sem mencoes ou resolucao.
 - [PENDENTE] Sessao facilitada com pauta, cronometro, fases de ideacao, agrupamento e validacao.
-- [PENDENTE] Convite por link com expiracao e permissao limitada.
-- [PENDENTE] Registro de quem criou, alterou ou validou cada decisao — o painel "Atividade" hoje mostra um aviso de que a trilha de auditoria ainda nao existe (nao mostra mais eventos fixos ilustrativos).
+- [PARCIAL] Convite — existe convite por e-mail com papel definido pelo admin (secao 5.1); nao existe convite por *link* com expiracao e permissao limitada como descrito aqui.
+- [FEITO] Registro de quem criou, alterou ou validou cada decisao — tabela `audit_events` escrita so por triggers de banco (cliente nao consegue inserir, testado), aba "Atividade" mostra autor real, acao e timestamp de cada evento em nota/projeto, mais recente primeiro.
 
 ### 5.4 Governanca e saidas
 
-- [PARCIAL] Status do projeto — um botao alterna entre RASCUNHO, EM VALIDACAO e APROVADO, agora persistido em `projects.status`; faltam "em execucao" e "arquivado", e nao ha fluxo de aprovacao por pessoa.
-- [PARCIAL] Versionamento — existe um numero de versao persistido em `projects.version` que incrementa a cada clique; nao ha snapshot imutavel nem comparacao entre versoes.
-- [PENDENTE] Aprovacao por bloco ou do canvas completo — hoje e um clique global e simbolico.
+- [PARCIAL] Status do projeto — um botao alterna entre RASCUNHO, EM VALIDACAO e APROVADO, persistido em `projects.status`; faltam "em execucao" e "arquivado", e nao ha fluxo de aprovacao por pessoa (so um clique de quem tem papel editor/admin).
+- [PARCIAL] Versionamento — o numero em `projects.version` incrementa a cada clique em "Nova versão", mas agora tem efeito real: **projeto `APROVADO` fica travado** (trigger + RLS no banco, nao so escondido na UI) — nenhuma nota pode ser criada, editada ou excluida, e nenhum campo do projeto muda, ate alguem clicar "Nova versão" (que volta o status a RASCUNHO). Validado tentando editar direto via API sem passar pela UI e confirmando rejeicao. Ainda nao ha snapshot imutavel do conteudo nem comparacao entre versoes — o travamento impede _mudar_ o conteudo aprovado, mas nao guarda uma copia dele em separado.
+- [PENDENTE] Aprovacao por bloco ou do canvas completo — hoje e um clique global; ficou mais forte (trava de verdade), mas continua sendo uma pessoa so aprovando o projeto inteiro, sem aprovacao por bloco nem por multiplos stakeholders.
 - [PARCIAL] Exportacao — gera um JSON de backup; faltam PDF, PNG e documento estruturado.
 - [PENDENTE] Link de leitura somente para versoes publicadas.
 - [PENDENTE] Painel com projetos, status, ultima revisao, riscos altos e aprovacoes pendentes — hoje existe apenas o seletor de projetos no cabecalho.
@@ -129,7 +140,7 @@ Cada organizacao deve possuir papeis configuraveis, grupos e escopos de acesso p
 - **Frontend web:** React com TypeScript, editor de canvas responsivo e atualizacao em tempo real. *Em uso: React 19 + TypeScript + Vite. `App.tsx` deixou de possuir identidade propria e passou a receber sessao/organizacao/papel via props, com `AuthGate.tsx` decidindo entre login, onboarding de organizacao e o app.*
 - **API:** backend modular REST ou GraphQL, com autorizacao centralizada e validacao de comandos. *Ainda nao existe: o front-end fala direto com o Supabase, com autorizacao inteira delegada a RLS.*
 - **Tempo real:** WebSocket com protocolo de presenca e sincronizacao; usar CRDT ou controle otimista com revisao de conflitos. *Em uso: Supabase Realtime (`postgres_changes`) com um canal por projeto (insert/update/delete de notas, update de projeto), sem presenca e com "ultima escrita vence".*
-- **Banco transacional:** PostgreSQL para organizacoes, usuarios, projetos, versoes, blocos, notas, comentarios e aprovacoes. *Em uso: Supabase Postgres com `organizations`, `memberships`, `projects` e `notes`, RLS por organizacao via `auth.uid()`. Ainda faltam `canvas_versions`, `comments`, `approvals`, `audit_events` e as demais entidades da secao 8.2.*
+- **Banco transacional:** PostgreSQL para organizacoes, usuarios, projetos, versoes, blocos, notas, comentarios e aprovacoes. *Em uso: Supabase Postgres com `organizations`, `memberships`, `projects`, `notes`, `comments`, `invitations` e `audit_events`, RLS por organizacao via `auth.uid()`, mais um trigger de trava (`enforce_project_lock`) em `projects`. Ainda faltam `canvas_versions`, `approvals`, `mentions` e as demais entidades da secao 8.2.*
 - **Arquivos:** armazenamento S3 compativel para exportacoes, anexos e imagens. *Nao iniciado.*
 - **Fila:** Redis ou servico gerenciado para exportacao, notificacoes e tarefas demoradas. *Nao iniciado.*
 - **Identidade:** provedor OIDC/SAML no plano corporativo; e-mail e MFA no plano inicial. *Parcial: Supabase Auth habilitado com e-mail+senha e link magico; MFA e SSO corporativo ainda nao iniciados.*
@@ -146,7 +157,7 @@ Cada organizacao deve possuir papeis configuraveis, grupos e escopos de acesso p
 
 Recomenda-se guardar o snapshot completo da versao publicada e os eventos de alteracao separadamente. Isso simplifica comparacao, auditoria e restauracao sem sacrificar a consulta do estado atual.
 
-*Implementado hoje: `organizations`, `memberships` (papel, sem tabela `roles` separada), `projects` e `notes` (`supabase/schema.sql`). Os 13 blocos continuam fixos no front-end, nao no banco — nao ha `canvas_blocks`. Ainda faltam `canvases`/`canvas_versions` (versionamento real), `comments`/`mentions`, `approvals`, `audit_events`, `risks`/`deliverables`/`requirements`/`stakeholders` como entidades proprias, e `subscriptions`/`usage_counters`/`exports`/`invitations`.*
+*Implementado hoje: `organizations`, `memberships` (papel, sem tabela `roles` separada), `projects`, `notes`, `comments` (nivel de projeto, sem `note_id`/`block_id`), `invitations` e `audit_events` (`supabase/schema.sql`). Os 13 blocos continuam fixos no front-end, nao no banco — nao ha `canvas_blocks`. Ainda faltam `canvases`/`canvas_versions` (snapshot imutavel de versao), `mentions`, `approvals`, `risks`/`deliverables`/`requirements`/`stakeholders` como entidades proprias, e `subscriptions`/`usage_counters`/`exports`.*
 
 ## 9. Seguranca e requisitos nao funcionais
 
@@ -173,7 +184,7 @@ Validar com 3 a 5 organizacoes: tipos de projeto, processo de aprovacao, necessi
 
 Acesso multi-organizacao, projetos, 13 blocos, notas, comentarios, permissoes, autosave, versoes, aprovacao, exportacao PDF e painel basico.
 
-*Status: em andamento, com a fundacao destravada. Feito — acesso multi-organizacao real (auth + RLS), os 13 blocos, projetos e notas com autosave via Supabase (nao mais localStorage), permissoes basicas (leitura para todo membro, escrita para admin/editor). Ainda faltando — comentarios sincronizados no banco, versoes reais (snapshot/comparacao), aprovacao por bloco, exportacao PDF e painel de projetos com status/riscos/aprovacoes pendentes.*
+*Status: em andamento, com a fundacao, a colaboracao basica e o travamento de governanca destravados. Feito — acesso multi-organizacao real (auth + RLS), convite de membros por e-mail, os 13 blocos, projetos e notas com autosave via Supabase, comentarios sincronizados no banco, permissoes por papel, projeto aprovado travado de verdade (banco, nao so UI) e trilha de auditoria real. Ainda faltando — snapshot imutavel de versao (guardar copia separada do conteudo aprovado), aprovacao por bloco, exportacao PDF e painel de projetos com status/riscos/aprovacoes pendentes.*
 
 ### Fase 2 - Colaboracao avancada, 6 a 8 semanas
 
@@ -198,7 +209,7 @@ Integracoes com Jira, Azure DevOps, Trello, Teams e calendarios. Assistentes pod
 - Auditoria identifica autor, acao, horario e objeto alterado.
 - O canvas pode ser usado por teclado e tem alternativa linear para tecnologias assistivas.
 
-*Atendidos e validados: "dois usuarios veem alteracoes sem recarregar" (testado com duas abas da mesma conta via Realtime) e "usuario sem permissao nao consegue ler dados de outro projeto" (testado criando uma segunda organizacao e confirmando que ela nao ve os projetos da primeira). Os demais continuam pendentes: nao ha fluxo de aprovacao com comentario, PDF/PNG, auditoria real nem verificacao formal de acessibilidade.*
+*Atendidos e validados: "dois usuarios veem alteracoes sem recarregar" (testado entre contas diferentes via Realtime), "usuario sem permissao nao consegue ler dados de outro projeto" (testado com uma segunda organizacao) e "auditoria identifica autor, acao, horario e objeto alterado" (tabela `audit_events`, testado tentando escrever direto pela API e confirmando rejeicao). Os demais continuam pendentes: nao ha fluxo de aprovacao com comentario nem versao publicada preservada separadamente (o travamento impede editar o aprovado, mas nao guarda uma copia dele), sem PDF/PNG, sem verificacao formal de acessibilidade.*
 
 ## 12. Metricas de sucesso
 
@@ -221,13 +232,16 @@ O limite comercial deve ser baseado em usuarios ativos, projetos ativos e armaze
 
 ## 14. Proximos passos recomendados
 
-Com a fundacao de autenticacao e multi-tenancy validada, os proximos passos de maior impacto sao, em ordem sugerida:
+Com a fundacao de autenticacao/multi-tenancy e a colaboracao basica entre membros validadas, os proximos passos de maior impacto sao, em ordem sugerida:
 
 1. ~~Habilitar Supabase Auth e introduzir `organizations`/`users`/`memberships`.~~ Feito e validado em 20/08/2026.
-2. ~~Substituir a tabela unica `project_canvases` pelo modelo relacional minimo (`projects`, `notes`).~~ Feito — `canvases`/`canvas_versions` ficam para quando o versionamento real for implementado (item 5).
+2. ~~Substituir a tabela unica `project_canvases` pelo modelo relacional minimo (`projects`, `notes`).~~ Feito — `canvases`/`canvas_versions` ficam para quando o versionamento real for implementado (item 4).
 3. ~~Trocar as policies de demonstracao por policies baseadas em `auth.uid()` e membership de organizacao.~~ Feito e validado com isolamento real entre duas organizacoes.
-4. Convite de membros por e-mail (hoje so o criador da organizacao vira membro) e vincular comentarios e notas por `nota_id`/`bloco_id` no banco em vez de listas soltas em `localStorage`, para permitir sincronizacao real de comentarios entre usuarios.
-5. So depois disso investir em versionamento imutavel (`canvases`/`canvas_versions`), aprovacao por bloco, exportacao PDF/PNG e auditoria (`audit_events`) — funcionalidades que agora tem identidade e dados relacionais para se apoiar.
+4. ~~Convite de membros por e-mail e comentarios sincronizados no banco entre usuarios.~~ Feito e validado em 20/08/2026 (sem envio real de e-mail; comentarios ainda em nivel de projeto, nao por nota/bloco).
+5. ~~Travar edicao de notas/projeto quando o status for `APROVADO`.~~ Feito e validado em 20/08/2026: um trigger no banco (`enforce_project_lock`) mais RLS em `notes` bloqueiam qualquer escrita enquanto aprovado, ate "Nova versão" resetar o status — testado inclusive tentando editar via API direto, sem passar pela UI. Comentarios continuam liberados de proposito.
+6. ~~Trilha de auditoria (`audit_events`).~~ Feito e validado em 20/08/2026: triggers em `notes` e `projects` registram criacao/edicao/exclusao de nota e aprovacao/nova versao do projeto, com autor real; sem policy de insert para o cliente (testado tentando inserir direto pela API). A aba "Atividade" mostra esse historico de verdade.
+7. Investir em snapshot de versao real (`canvases`/`canvas_versions`, com tela de historico/comparacao) — o travamento (item 5) impede *mudar* o conteudo aprovado, mas nao guarda uma *copia separada* dele; se alguem destravar com "Nova versão" e reescrever por engano, o que foi aprovado antes nao fica preservado em lugar nenhum.
+8. Exportacao em PDF/PNG, real envio de e-mail para convites (via Supabase Edge Function + servico de e-mail) e recuperacao de senha/MFA — melhorias de qualidade de vida que nao bloqueiam o uso interno do app, mas bloqueiam abrir para usuarios externos de verdade.
 
 ## 15. Decisoes para iniciar o projeto
 
@@ -236,4 +250,6 @@ Com a fundacao de autenticacao e multi-tenancy validada, os proximos passos de m
 3. Confirmar a politica de dados, residencia e retencao para clientes brasileiros.
 4. Selecionar 3 organizacoes-piloto e medir uma sessao completa de construcao e aprovacao.
 5. Aprovar o prototipo antes do desenvolvimento, com foco na leitura do canvas inteiro em uma unica tela.
-6. ~~Priorizar autenticacao e multi-tenancy antes de continuar investindo em recursos visuais do canvas.~~ Feito em 20/08/2026 — ver secao 2. Proxima prioridade de risco: convite de membros e comentarios sincronizados (secao 14, item 4), pois sem isso a colaboracao real entre pessoas de uma mesma organizacao ainda depende de compartilhar login.
+6. ~~Priorizar autenticacao e multi-tenancy antes de continuar investindo em recursos visuais do canvas.~~ Feito em 20/08/2026 — ver secao 2.
+7. ~~Priorizar convite de membros e comentarios sincronizados antes de recursos visuais adicionais.~~ Feito em 20/08/2026 — ver secao 2.
+8. ~~Travar edicao quando o projeto estiver aprovado e adicionar trilha de auditoria, antes de investir em snapshot de versao completo.~~ Feito em 20/08/2026 — ver secao 2 e secao 14, itens 5 e 6. Proxima prioridade de risco: nao existe copia imutavel do conteudo aprovado (secao 14, item 7) — o travamento impede editar e a auditoria registra quem mudou o que, mas nenhum dos dois guarda uma copia separada do conteudo em si.

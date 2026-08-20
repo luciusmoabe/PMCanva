@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import type { CommentRow } from './commentsRepository'
 
 export type ProjectRow = {
   id: string
@@ -93,14 +94,14 @@ export async function createNote(projectId: string, blockKey: string, text: stri
 export async function updateNote(noteId: string, patch: Partial<Pick<NoteRow, 'text' | 'status' | 'color'>>): Promise<void> {
   if (!supabase) return
 
-  const { error } = await supabase.from('notes').update(patch).eq('id', noteId)
+  const { error } = await supabase.from('notes').update(patch).eq('id', noteId).select('id').single()
   if (error) throw error
 }
 
 export async function deleteNote(noteId: string): Promise<void> {
   if (!supabase) return
 
-  const { error } = await supabase.from('notes').delete().eq('id', noteId)
+  const { error } = await supabase.from('notes').delete().eq('id', noteId).select('id').single()
   if (error) throw error
 }
 
@@ -109,6 +110,7 @@ export type ProjectRealtimeHandlers = {
   onNoteUpdate: (note: NoteRow) => void
   onNoteDelete: (noteId: string) => void
   onProjectUpdate: (project: ProjectRow) => void
+  onCommentInsert: (comment: CommentRow) => void
 }
 
 export function subscribeToProject(projectId: string, handlers: ProjectRealtimeHandlers, onStatus?: (status: 'online' | 'offline') => void) {
@@ -131,6 +133,9 @@ export function subscribeToProject(projectId: string, handlers: ProjectRealtimeH
     })
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'projects', filter: `id=eq.${projectId}` }, (payload) => {
       handlers.onProjectUpdate(payload.new as ProjectRow)
+    })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comments', filter: `project_id=eq.${projectId}` }, (payload) => {
+      handlers.onCommentInsert(payload.new as CommentRow)
     })
     .subscribe((status) => {
       onStatus?.(status === 'SUBSCRIBED' ? 'online' : 'offline')
