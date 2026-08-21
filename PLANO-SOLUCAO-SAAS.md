@@ -53,6 +53,7 @@ O que falta agora e sobretudo aprovacao por multiplos stakeholders (hoje e binar
 - Campos de apoio opcionais em qualquer nota: indicador, fonte da evidencia e data de revisao — recolhidos por padrao ao criar, sempre visiveis ao editar.
 - Aprovacao por bloco: qualquer um dos 13 blocos pode ser aprovado/desaprovado individualmente, travando so as notas daquele bloco (o resto do canvas continua editavel), com trava real via RLS (validado tentando inserir nota direto pela API num bloco travado: 403). "Nova versão" libera as aprovacoes de bloco junto com a do projeto.
 - Link de leitura publica para versoes aprovadas: token aleatorio por versao, pagina somente-leitura sem login (`?share=<token>`), sem abrir nenhuma policy de RLS para anonimos — so uma funcao estreita que devolve exatamente uma versao pelo token exato.
+- Galeria de templates ("Templates" na sidebar): 3 modelos com notas reais em todos os 13 blocos (PMO, produto digital, evento corporativo); criar a partir de um template ja abre o canvas populado.
 
 **Lacunas que continuam**
 
@@ -100,7 +101,7 @@ Cada organizacao deve possuir papeis configuraveis, grupos e escopos de acesso p
 
 ### 5.2 Projetos e canvas
 
-- [PARCIAL] Criacao de projeto a partir de canvas em branco ou template — cria em branco (sem notas de exemplo); nao ha templates de fato. Nome e gerente sao definidos na criacao e **podem ser editados depois** (botao "..." na barra de ferramentas do canvas, visivel para admin/editor e escondido quando o projeto esta travado): o gerente e escolhido entre os membros reais da organizacao (`projects.manager_user_id`, coluna adicionada em 20/08/2026), nao mais um texto livre — `manager_name` continua existindo como rotulo de exibicao, preenchido automaticamente a partir do membro escolhido.
+- [FEITO em 20/08/2026] Criacao de projeto a partir de canvas em branco ou de um template. A aba "Templates" (item de menu que antes nao fazia nada) virou uma galeria com 3 modelos prontos — Implantacao de plataforma de PMO, Lancamento de produto digital e Evento corporativo, cada um com notas reais em todos os 13 blocos — e "Usar este template" cria o projeto ja populado. O primeiro template reaproveita um canvas real preenchido que ja existia no repositorio (`canvas-pmo-v1.8.json`, limpo de notas de teste); os outros dois foram escritos do zero. Nome e gerente sao definidos na criacao e **podem ser editados depois** (botao "..." na barra de ferramentas do canvas, visivel para admin/editor e escondido quando o projeto esta travado): o gerente e escolhido entre os membros reais da organizacao (`projects.manager_user_id`, coluna adicionada em 20/08/2026), nao mais um texto livre — `manager_name` continua existindo como rotulo de exibicao, preenchido automaticamente a partir do membro escolhido.
 - [FEITO] Os 13 blocos do Project Model Canvas, agrupados pelas perguntas do metodo, no layout classico.
 - [PARCIAL] Edicao de cartoes/notas com texto curto, autor e status (validada/em revisao) — autor agora e o nome/iniciais do usuario logado (nao mais fixo); ainda sem responsavel dedicado (so o autor de criacao). Ganhou indicador, fonte da evidencia e data de revisao como campos opcionais (ver abaixo).
 - [PARCIAL] Busca e filtro por status — reordenacao, fixacao e arquivamento de notas ainda nao existem.

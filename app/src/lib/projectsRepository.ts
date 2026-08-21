@@ -102,6 +102,15 @@ export async function createNote(projectId: string, blockKey: string, text: stri
   return data
 }
 
+export async function seedNotesFromTemplate(projectId: string, notes: { blockKey: string; text: string; color: string }[], author: string): Promise<void> {
+  if (!supabase) return
+  if (notes.length === 0) return
+
+  const rows = notes.map((note) => ({ project_id: projectId, block_key: note.blockKey, text: note.text, color: note.color, author }))
+  const { error } = await supabase.from('notes').insert(rows)
+  if (error) throw error
+}
+
 export async function updateNote(noteId: string, patch: Partial<Pick<NoteRow, 'text' | 'status' | 'color' | 'indicator' | 'evidence_source' | 'review_date'>>): Promise<void> {
   if (!supabase) return
 
