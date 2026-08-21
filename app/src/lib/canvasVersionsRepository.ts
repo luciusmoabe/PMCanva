@@ -18,6 +18,15 @@ export type CanvasVersionRow = {
   approved_by_label: string
   notes_snapshot: VersionNoteSnapshot[]
   approved_at: string
+  share_token: string
+}
+
+export type PublicCanvasVersion = {
+  project_name: string
+  manager_name: string
+  version: number
+  approved_at: string
+  notes_snapshot: VersionNoteSnapshot[]
 }
 
 export async function listCanvasVersions(projectId: string): Promise<CanvasVersionRow[]> {
@@ -34,4 +43,16 @@ export async function listCanvasVersions(projectId: string): Promise<CanvasVersi
     return []
   }
   return data ?? []
+}
+
+export async function getPublicCanvasVersion(token: string): Promise<PublicCanvasVersion | null> {
+  if (!supabase) return null
+
+  const { data, error } = await supabase.rpc('get_public_canvas_version', { token })
+  if (error) {
+    console.warn('Supabase public canvas version load failed:', error.message)
+    return null
+  }
+  const rows = data as unknown as PublicCanvasVersion[]
+  return rows?.[0] ?? null
 }

@@ -7,6 +7,9 @@ __pycache__/
 app/node_modules/
 app/dist/
 
+# Supabase CLI
+supabase/.temp/
+
 # Editors and OS
 .vscode/
 .idea/

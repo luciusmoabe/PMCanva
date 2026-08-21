@@ -653,6 +653,12 @@ create table if not exists public.canvas_versions (
 
 create index if not exists canvas_versions_project_idx on public.canvas_versions (project_id, approved_at desc);
 
+-- Unguessable per-version token for the public read-only share link
+-- (see get_public_canvas_version below). Generated automatically for
+-- every version, published or not — nothing is reachable without the
+-- exact token, so there is no separate "publish" toggle to manage.
+alter table public.canvas_versions add column if not exists share_token uuid not null default gen_random_uuid() unique;
+
 alter table public.canvas_versions enable row level security;
 
 drop policy if exists "canvas_versions_select_member" on public.canvas_versions;
@@ -700,7 +706,201 @@ create trigger snapshot_canvas_version
   for each row execute function public.snapshot_canvas_version();
 
 -- ------------------------------------------------------------
--- Realtime: broadcast row changes for projects, notes and comments.
+-- Block-level approval: an editor can approve/unapprove a single
+-- canvas block independently of the whole-project approval (see
+-- "Project lock" above). Approving a block freezes only its own
+-- notes; the rest of the canvas stays editable. A row in
+-- block_approvals means "this block is approved" — there is no
+-- boolean flag, approve = insert, unapprove = delete, same idiom
+-- as comments/audit_events (create-only rows, no update policy).
+-- Whole-project approval stays independent of this: you can approve
+-- the entire project without approving every block first, and vice
+-- versa — chaining the two would be extra complexity nobody asked for.
+-- ------------------------------------------------------------
+
+create table if not exists public.block_approvals (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects (id) on delete cascade,
+  block_key text not null check (block_key in (
+    'why', 'objectives', 'benefits', 'product', 'requirements',
+    'stakeholders', 'team', 'assumptions', 'deliverables',
+    'constraints', 'risks', 'timeline', 'costs'
+  )),
+  approved_by uuid references auth.users (id) on delete set null default auth.uid(),
+  approved_by_label text not null default '',
+  approved_at timestamptz not null default now(),
+  unique (project_id, block_key)
+);
+
+create index if not exists block_approvals_project_id_idx on public.block_approvals (project_id);
+
+alter table public.block_approvals enable row level security;
+
+drop policy if exists "block_approvals_select_member" on public.block_approvals;
+create policy "block_approvals_select_member"
+  on public.block_approvals for select
+  to authenticated
+  using (public.is_org_member(public.project_organization_id(project_id)));
+
+drop policy if exists "block_approvals_insert_editor" on public.block_approvals;
+create policy "block_approvals_insert_editor"
+  on public.block_approvals for insert
+  to authenticated
+  with check (
+    public.is_org_editor(public.project_organization_id(project_id))
+    and approved_by = auth.uid()
+    and not public.project_is_locked(project_id)
+  );
+
+drop policy if exists "block_approvals_delete_editor" on public.block_approvals;
+create policy "block_approvals_delete_editor"
+  on public.block_approvals for delete
+  to authenticated
+  using (
+    public.is_org_editor(public.project_organization_id(project_id))
+    and not public.project_is_locked(project_id)
+  );
+
+create or replace function public.block_is_locked(target_project_id uuid, target_block_key text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1 from public.block_approvals
+    where project_id = target_project_id and block_key = target_block_key
+  );
+$$;
+
+revoke all on function public.block_is_locked(uuid, text) from public;
+grant execute on function public.block_is_locked(uuid, text) to authenticated;
+
+-- notes: third revision of these three policies (see "Project lock"
+-- above for the second) — adds the per-block lock alongside the
+-- project-wide one, so an approved block freezes its own notes even
+-- while the rest of the project stays editable.
+drop policy if exists "notes_insert_editor" on public.notes;
+create policy "notes_insert_editor"
+  on public.notes for insert
+  to authenticated
+  with check (
+    public.is_org_editor(public.project_organization_id(project_id))
+    and created_by = auth.uid()
+    and not public.project_is_locked(project_id)
+    and not public.block_is_locked(project_id, block_key)
+  );
+
+drop policy if exists "notes_update_editor" on public.notes;
+create policy "notes_update_editor"
+  on public.notes for update
+  to authenticated
+  using (public.is_org_editor(public.project_organization_id(project_id)))
+  with check (
+    public.is_org_editor(public.project_organization_id(project_id))
+    and not public.project_is_locked(project_id)
+    and not public.block_is_locked(project_id, block_key)
+  );
+
+drop policy if exists "notes_delete_editor" on public.notes;
+create policy "notes_delete_editor"
+  on public.notes for delete
+  to authenticated
+  using (
+    public.is_org_editor(public.project_organization_id(project_id))
+    and not public.project_is_locked(project_id)
+    and not public.block_is_locked(project_id, block_key)
+  );
+
+-- audit_events: extend the allowed actions to cover block approval.
+alter table public.audit_events drop constraint if exists audit_events_action_check;
+alter table public.audit_events add constraint audit_events_action_check
+  check (action in ('note_created', 'note_updated', 'note_deleted', 'project_approved', 'project_new_version', 'block_approved', 'block_unapproved'));
+
+create or replace function public.log_block_audit_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  actor_label text := public.current_actor_label();
+begin
+  if tg_op = 'INSERT' then
+    insert into public.audit_events (project_id, actor, actor_label, action, block_key)
+    values (new.project_id, auth.uid(), actor_label, 'block_approved', new.block_key);
+  elsif tg_op = 'DELETE' then
+    insert into public.audit_events (project_id, actor, actor_label, action, block_key)
+    values (old.project_id, auth.uid(), actor_label, 'block_unapproved', old.block_key);
+  end if;
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists log_block_audit_event on public.block_approvals;
+create trigger log_block_audit_event
+  after insert or delete on public.block_approvals
+  for each row execute function public.log_block_audit_event();
+
+-- Starting a new version (project leaves APROVADO) also releases
+-- every block-level approval — otherwise a block could stay frozen
+-- forever across version cycles even after the project itself
+-- unlocked. The delete below re-fires log_block_audit_event for
+-- each released block, so the "who released what" trail is automatic.
+create or replace function public.clear_block_approvals_on_new_version()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if old.status = 'APROVADO' and new.status <> 'APROVADO' then
+    delete from public.block_approvals where project_id = new.id;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists clear_block_approvals_on_new_version on public.projects;
+create trigger clear_block_approvals_on_new_version
+  after update on public.projects
+  for each row execute function public.clear_block_approvals_on_new_version();
+
+-- ------------------------------------------------------------
+-- Public read-only share link: exposes exactly one approved
+-- version's snapshot to anyone with the token, no login required.
+-- Deliberately narrow — this function is the ONLY thing granted to
+-- the anon role in the whole schema. It does not touch RLS on
+-- projects/notes/canvas_versions at all (those stay authenticated-
+-- only); it just returns a hand-picked subset of one row matched by
+-- an unguessable uuid, the same shape as a normal API response.
+-- ------------------------------------------------------------
+
+create or replace function public.get_public_canvas_version(token uuid)
+returns table (
+  project_name text,
+  manager_name text,
+  version numeric,
+  approved_at timestamptz,
+  notes_snapshot jsonb
+)
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select cv.project_name, cv.manager_name, cv.version, cv.approved_at, cv.notes_snapshot
+  from public.canvas_versions cv
+  where cv.share_token = token;
+$$;
+
+revoke all on function public.get_public_canvas_version(uuid) from public;
+grant execute on function public.get_public_canvas_version(uuid) to anon, authenticated;
+
+-- ------------------------------------------------------------
+-- Realtime: broadcast row changes for projects, notes, comments
+-- and block approvals.
 -- ------------------------------------------------------------
 do $$
 begin
@@ -721,5 +921,11 @@ begin
     where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'comments'
   ) then
     alter publication supabase_realtime add table public.comments;
+  end if;
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'block_approvals'
+  ) then
+    alter publication supabase_realtime add table public.block_approvals;
   end if;
 end $$;

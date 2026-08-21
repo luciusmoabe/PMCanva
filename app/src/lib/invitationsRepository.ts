@@ -71,6 +71,14 @@ export async function createInvitation(organizationId: string, email: string, ro
   return data
 }
 
+export async function sendInvitationEmail(invitationId: string, appUrl: string): Promise<void> {
+  if (!supabase) return
+
+  const { data, error } = await supabase.functions.invoke('send-invitation-email', { body: { invitationId, appUrl } })
+  if (error) throw error
+  if (data && typeof data === 'object' && 'error' in data && data.error) throw new Error(String(data.error))
+}
+
 export async function revokeInvitation(invitationId: string): Promise<void> {
   if (!supabase) return
 

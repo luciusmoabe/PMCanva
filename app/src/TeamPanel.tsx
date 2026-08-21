@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { UserPlus, Users, X } from 'lucide-react'
 import { listOrgMembers, type OrgMember, type Membership } from './lib/organizationsRepository'
-import { createInvitation, listOrgInvitations, revokeInvitation, type InvitationRow } from './lib/invitationsRepository'
+import { createInvitation, listOrgInvitations, revokeInvitation, sendInvitationEmail, type InvitationRow } from './lib/invitationsRepository'
 import { roleLabels } from './lib/roleLabels'
 
 const roleOptions: Membership['role'][] = ['admin', 'editor', 'commenter', 'reader']
@@ -15,6 +15,7 @@ function TeamPanel({ organizationId, role }: { organizationId: string; role: Mem
   const [inviteRole, setInviteRole] = useState<Membership['role']>('editor')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [emailWarning, setEmailWarning] = useState<string | null>(null)
 
   function refreshMembers() {
     listOrgMembers(organizationId).then(setMembers)
@@ -33,11 +34,17 @@ function TeamPanel({ organizationId, role }: { organizationId: string; role: Mem
     event.preventDefault()
     if (!inviteEmail.trim()) return
     setError(null)
+    setEmailWarning(null)
     setLoading(true)
     try {
-      await createInvitation(organizationId, inviteEmail.trim(), inviteRole)
+      const invitation = await createInvitation(organizationId, inviteEmail.trim(), inviteRole)
       setInviteEmail('')
       refreshInvitations()
+      try {
+        await sendInvitationEmail(invitation.id, window.location.origin)
+      } catch (emailError) {
+        setEmailWarning(`Convite criado, mas o e-mail não foi enviado (${emailError instanceof Error ? emailError.message : 'erro desconhecido'}). Avise a pessoa por fora por enquanto.`)
+      }
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Nao foi possivel enviar o convite.')
     } finally {
@@ -73,7 +80,7 @@ function TeamPanel({ organizationId, role }: { organizationId: string; role: Mem
       {isAdmin && (
         <div className="team-section">
           <h2><UserPlus size={16} /> Convidar membro</h2>
-          <p className="auth-subtitle">Nenhum e-mail e enviado automaticamente — avise a pessoa por fora que ela foi convidada.</p>
+          <p className="auth-subtitle">Um e-mail com o convite é enviado automaticamente para a pessoa.</p>
           <form className="invite-form" onSubmit={handleInvite}>
             <label>E-mail
               <input type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="pessoa@empresa.com" required />
@@ -86,6 +93,7 @@ function TeamPanel({ organizationId, role }: { organizationId: string; role: Mem
             <button type="submit" className="primary-button" disabled={loading}><UserPlus size={15} /> Convidar</button>
           </form>
           {error && <div className="error-banner">{error}</div>}
+          {emailWarning && <div className="error-banner">{emailWarning}</div>}
 
           {invitations.length > 0 && <>
             <span className="canvas-kicker">CONVITES PENDENTES</span>

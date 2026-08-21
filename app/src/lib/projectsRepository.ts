@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import type { CommentRow } from './commentsRepository'
+import type { BlockApprovalRow } from './blockApprovalsRepository'
 
 export type ProjectRow = {
   id: string
@@ -121,6 +122,8 @@ export type ProjectRealtimeHandlers = {
   onNoteDelete: (noteId: string) => void
   onProjectUpdate: (project: ProjectRow) => void
   onCommentInsert: (comment: CommentRow) => void
+  onBlockApprovalInsert: (approval: BlockApprovalRow) => void
+  onBlockApprovalDelete: (approvalId: string) => void
 }
 
 export function subscribeToProject(projectId: string, handlers: ProjectRealtimeHandlers, onStatus?: (status: 'online' | 'offline') => void) {
@@ -146,6 +149,12 @@ export function subscribeToProject(projectId: string, handlers: ProjectRealtimeH
     })
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comments', filter: `project_id=eq.${projectId}` }, (payload) => {
       handlers.onCommentInsert(payload.new as CommentRow)
+    })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'block_approvals', filter: `project_id=eq.${projectId}` }, (payload) => {
+      handlers.onBlockApprovalInsert(payload.new as BlockApprovalRow)
+    })
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'block_approvals', filter: `project_id=eq.${projectId}` }, (payload) => {
+      handlers.onBlockApprovalDelete((payload.old as { id: string }).id)
     })
     .subscribe((status) => {
       onStatus?.(status === 'SUBSCRIBED' ? 'online' : 'offline')
