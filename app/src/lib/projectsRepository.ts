@@ -13,6 +13,7 @@ export type ProjectRow = {
   created_by: string | null
   created_at: string
   updated_at: string
+  archived_at: string | null
 }
 
 export type NoteRow = {
@@ -44,10 +45,28 @@ export async function listProjects(organizationId: string): Promise<ProjectRow[]
     .from('projects')
     .select('*')
     .eq('organization_id', organizationId)
+    .is('archived_at', null)
     .order('created_at', { ascending: true })
 
   if (error) {
     console.warn('Supabase projects load failed:', error.message)
+    return []
+  }
+  return data ?? []
+}
+
+export async function listArchivedProjects(organizationId: string): Promise<ProjectRow[]> {
+  if (!supabase) return []
+
+  const { data, error } = await supabase
+    .from('projects')
+    .select('*')
+    .eq('organization_id', organizationId)
+    .not('archived_at', 'is', null)
+    .order('archived_at', { ascending: false })
+
+  if (error) {
+    console.warn('Supabase archived projects load failed:', error.message)
     return []
   }
   return data ?? []
@@ -66,11 +85,19 @@ export async function createProject(organizationId: string, name: string, manage
   return data
 }
 
-export async function updateProject(projectId: string, patch: Partial<Pick<ProjectRow, 'name' | 'manager_name' | 'manager_user_id' | 'status' | 'version'>>): Promise<void> {
+export async function updateProject(projectId: string, patch: Partial<Pick<ProjectRow, 'name' | 'manager_name' | 'manager_user_id' | 'status' | 'version' | 'archived_at'>>): Promise<void> {
   if (!supabase) return
 
   const { error } = await supabase.from('projects').update(patch).eq('id', projectId)
   if (error) throw error
+}
+
+export async function archiveProject(projectId: string): Promise<void> {
+  await updateProject(projectId, { archived_at: new Date().toISOString() })
+}
+
+export async function restoreProject(projectId: string): Promise<void> {
+  await updateProject(projectId, { archived_at: null })
 }
 
 export async function listNotes(projectId: string): Promise<NoteRow[]> {

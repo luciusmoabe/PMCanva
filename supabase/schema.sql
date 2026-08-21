@@ -50,6 +50,10 @@ create table if not exists public.projects (
 -- picked member's name/e-mail when this column is set on the client.
 alter table public.projects add column if not exists manager_user_id uuid references auth.users (id) on delete set null;
 
+-- Soft delete: archiving hides a project from the main list without
+-- destroying notes/comments/audit/versions — null means active.
+alter table public.projects add column if not exists archived_at timestamptz;
+
 create table if not exists public.notes (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects (id) on delete cascade,
@@ -478,12 +482,20 @@ grant execute on function public.project_is_locked(uuid) to authenticated;
 -- OLD.status, so a plain USING/WITH CHECK comparison can't tell
 -- "still approved" apart from "never was approved" — only a
 -- BEFORE trigger sees OLD and NEW together to make that call.
+-- Archiving is a lifecycle action, not a content edit, so it is
+-- explicitly exempt from the lock check below: an update that only
+-- touches archived_at (name/manager/version all unchanged) is let
+-- through even while the project is APROVADO. Anything that also
+-- touches those content fields still gets rejected as before.
 create or replace function public.enforce_project_lock()
 returns trigger
 language plpgsql
 as $$
 begin
-  if old.status = 'APROVADO' and new.status = 'APROVADO' then
+  if old.status = 'APROVADO' and new.status = 'APROVADO'
+     and (old.name, old.manager_name, old.manager_user_id, old.version)
+         is distinct from (new.name, new.manager_name, new.manager_user_id, new.version)
+  then
     raise exception 'Projeto aprovado esta travado. Crie uma nova versao para editar.';
   end if;
   return new;
@@ -616,6 +628,12 @@ begin
   elsif old.status = 'APROVADO' and new.status <> 'APROVADO' then
     insert into public.audit_events (project_id, actor, actor_label, action)
     values (new.id, auth.uid(), actor_label, 'project_new_version');
+  elsif new.archived_at is not null and old.archived_at is null then
+    insert into public.audit_events (project_id, actor, actor_label, action)
+    values (new.id, auth.uid(), actor_label, 'project_archived');
+  elsif new.archived_at is null and old.archived_at is not null then
+    insert into public.audit_events (project_id, actor, actor_label, action)
+    values (new.id, auth.uid(), actor_label, 'project_restored');
   end if;
   return new;
 end;
@@ -813,10 +831,12 @@ create policy "notes_delete_editor"
     and not public.block_is_locked(project_id, block_key)
   );
 
--- audit_events: extend the allowed actions to cover block approval.
+-- audit_events: extend the allowed actions to cover block approval and
+-- project archive/restore (the latter logged by log_project_audit_event
+-- above, which already inserts these values).
 alter table public.audit_events drop constraint if exists audit_events_action_check;
 alter table public.audit_events add constraint audit_events_action_check
-  check (action in ('note_created', 'note_updated', 'note_deleted', 'project_approved', 'project_new_version', 'block_approved', 'block_unapproved'));
+  check (action in ('note_created', 'note_updated', 'note_deleted', 'project_approved', 'project_new_version', 'block_approved', 'block_unapproved', 'project_archived', 'project_restored'));
 
 create or replace function public.log_block_audit_event()
 returns trigger
