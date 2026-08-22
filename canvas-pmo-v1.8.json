@@ -1,0 +1,251 @@
+{
+  "project": "Canvas de Plataforma PMO",
+  "status": "RASCUNHO",
+  "version": 1.8,
+  "blocks": [
+    {
+      "id": "why",
+      "tone": "coral",
+      "notes": [
+        {
+          "id": 1,
+          "text": "Reduzir o tempo de planejamento em 50%.",
+          "color": "mint",
+          "author": "AS",
+          "status": "done"
+        },
+        {
+          "id": 2,
+          "text": "Criar uma linguagem comum entre áreas e patrocinadores.",
+          "color": "yellow",
+          "author": "MR"
+        },
+        {
+          "id": 1787188592394,
+          "text": "dasdsagudagyu",
+          "color": "yellow",
+          "author": "AS"
+        }
+      ],
+      "title": "Justificativas",
+      "question": "POR QUE?"
+    },
+    {
+      "id": "objectives",
+      "tone": "coral",
+      "notes": [
+        {
+          "id": 3,
+          "text": "Ter 80% dos projetos estratégicos validados pela equipe até dezembro.",
+          "color": "lavender",
+          "author": "AS",
+          "status": "review"
+        },
+        {
+          "id": 4,
+          "text": "Dar visibilidade às decisões em uma única página.",
+          "color": "peach",
+          "author": "LC"
+        },
+        {
+          "id": 1787188599948,
+          "text": "saddsadad",
+          "color": "yellow",
+          "author": "AS"
+        }
+      ],
+      "title": "Objetivos SMART",
+      "question": "POR QUE?"
+    },
+    {
+      "id": "benefits",
+      "tone": "coral",
+      "notes": [
+        {
+          "id": 5,
+          "text": "Alinhamento rápido entre quem decide e quem executa.",
+          "color": "mint",
+          "author": "MR"
+        },
+        {
+          "id": 6,
+          "text": "Menos retrabalho durante a execução.",
+          "color": "yellow",
+          "author": "AS"
+        }
+      ],
+      "title": "Benefícios",
+      "question": "POR QUE?"
+    },
+    {
+      "id": "product",
+      "tone": "gold",
+      "notes": [
+        {
+          "id": 7,
+          "text": "Workspace colaborativo para criar, revisar e publicar canvases.",
+          "color": "blue",
+          "author": "LC",
+          "status": "done"
+        }
+      ],
+      "title": "Produto",
+      "question": "O QUE?"
+    },
+    {
+      "id": "requirements",
+      "tone": "gold",
+      "notes": [
+        {
+          "id": 8,
+          "text": "Edição por cartões, comentários, versões e exportação PDF.",
+          "color": "peach",
+          "author": "AS"
+        },
+        {
+          "id": 9,
+          "text": "Acesso seguro por organização e por projeto.",
+          "color": "mint",
+          "author": "MR"
+        }
+      ],
+      "title": "Requisitos",
+      "question": "O QUE?"
+    },
+    {
+      "id": "stakeholders",
+      "tone": "teal",
+      "notes": [
+        {
+          "id": 10,
+          "text": "Diretoria e patrocinadores do portfólio.",
+          "color": "lavender",
+          "author": "LC"
+        },
+        {
+          "id": 11,
+          "text": "Áreas parceiras e clientes convidados.",
+          "color": "yellow",
+          "author": "MR"
+        }
+      ],
+      "title": "Stakeholders externos",
+      "question": "QUEM?"
+    },
+    {
+      "id": "team",
+      "tone": "teal",
+      "notes": [
+        {
+          "id": 12,
+          "text": "PMO, gerentes de projeto, produto e especialistas.",
+          "color": "blue",
+          "author": "AS"
+        }
+      ],
+      "title": "Equipe",
+      "question": "QUEM?"
+    },
+    {
+      "id": "assumptions",
+      "tone": "blue",
+      "notes": [
+        {
+          "id": 13,
+          "text": "A organização já utiliza e-mail corporativo.",
+          "color": "mint",
+          "author": "MR"
+        },
+        {
+          "id": 14,
+          "text": "As decisões devem ser revisadas mensalmente.",
+          "color": "peach",
+          "author": "AS"
+        }
+      ],
+      "title": "Premissas",
+      "question": "COMO?"
+    },
+    {
+      "id": "deliverables",
+      "tone": "blue",
+      "notes": [
+        {
+          "id": 15,
+          "text": "MVP web, templates, governança e trilha de auditoria.",
+          "color": "yellow",
+          "author": "LC",
+          "status": "review"
+        }
+      ],
+      "title": "Grupo de entregas",
+      "question": "COMO?"
+    },
+    {
+      "id": "constraints",
+      "tone": "blue",
+      "notes": [
+        {
+          "id": 16,
+          "text": "Primeira versão deve funcionar sem treinamento formal.",
+          "color": "lavender",
+          "author": "AS"
+        }
+      ],
+      "title": "Restrições",
+      "question": "COMO?"
+    },
+    {
+      "id": "risks",
+      "tone": "blue",
+      "notes": [
+        {
+          "id": 17,
+          "text": "Baixa adesão de áreas acostumadas a planilhas.",
+          "color": "peach",
+          "author": "MR",
+          "status": "review"
+        },
+        {
+          "id": 18,
+          "text": "Escopo crescer antes da validação do MVP.",
+          "color": "coral",
+          "author": "LC"
+        }
+      ],
+      "title": "Riscos",
+      "question": "COMO?"
+    },
+    {
+      "id": "timeline",
+      "tone": "purple",
+      "notes": [
+        {
+          "id": 19,
+          "text": "Descoberta: 2 semanas · MVP: 12 semanas · Piloto: 4 semanas.",
+          "color": "blue",
+          "author": "AS"
+        }
+      ],
+      "title": "Linha do tempo",
+      "question": "QUANDO?"
+    },
+    {
+      "id": "costs",
+      "tone": "purple",
+      "notes": [
+        {
+          "id": 20,
+          "text": "Orçamento inicial reservado para produto e infraestrutura.",
+          "color": "mint",
+          "author": "LC"
+        }
+      ],
+      "title": "Custos",
+      "question": "QUANTO?"
+    }
+  ],
+  "comments": [
+    "Vou revisar este ponto com operações."
+  ]
+}
