@@ -27,3 +27,31 @@ export async function listAuditEvents(projectId: string): Promise<AuditEventRow[
   }
   return data ?? []
 }
+
+export type OrgAuditEventRow = AuditEventRow & { project_name: string }
+
+type OrgAuditEventJoinRow = AuditEventRow & { projects: { name: string } | { name: string }[] | null }
+
+export async function listOrgAuditEvents(organizationId: string, limit = 50): Promise<OrgAuditEventRow[]> {
+  if (!supabase) return []
+
+  const { data, error } = await supabase
+    .from('audit_events')
+    .select('*, projects!inner(name)')
+    .eq('projects.organization_id', organizationId)
+    .order('created_at', { ascending: false })
+    .limit(limit)
+    .returns<OrgAuditEventJoinRow[]>()
+
+  if (error) {
+    console.warn('Supabase org audit events load failed:', error.message)
+    return []
+  }
+
+  return (data ?? []).map((row) => {
+    const projectsRaw = row.projects
+    const projectName = (Array.isArray(projectsRaw) ? projectsRaw[0]?.name : projectsRaw?.name) ?? ''
+    const { projects: _projects, ...rest } = row
+    return { ...rest, project_name: projectName }
+  })
+}
