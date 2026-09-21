@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { RotateCcw } from 'lucide-react'
 import { listArchivedProjects, type ProjectRow } from './lib/projectsRepository'
+import { projectStatusLabels } from './lib/projectStatusLabels'
 
 function ArchivedProjectsPanel({ organizationId, onRestore }: { organizationId: string; onRestore: (projectId: string) => Promise<void> }) {
   const [projects, setProjects] = useState<ProjectRow[] | null>(null)
@@ -25,7 +26,7 @@ function ArchivedProjectsPanel({ organizationId, onRestore }: { organizationId: 
           <div className="overview-row" key={project.id}>
             <span className="overview-project-name">{project.name}</span>
             <span>{project.manager_name || '-'}</span>
-            <span className={project.status === 'APROVADO' ? 'overview-badge approved' : 'overview-badge draft'}>{project.status}</span>
+            <span className={project.status === 'APROVADO' || project.status === 'EM_EXECUCAO' ? 'overview-badge approved' : 'overview-badge draft'}>{projectStatusLabels[project.status] ?? project.status}</span>
             <span>{project.version.toFixed(1)}</span>
             <span>{project.archived_at ? new Date(project.archived_at).toLocaleString('pt-BR') : '-'}</span>
             <button type="button" className="tiny-link" onClick={() => handleRestore(project.id)}><RotateCcw size={12} /> Restaurar</button>

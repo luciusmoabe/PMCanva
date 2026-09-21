@@ -1,6 +1,6 @@
 import { supabase } from './supabase'
 
-export type AuditAction = 'note_created' | 'note_updated' | 'note_deleted' | 'project_approved' | 'project_new_version' | 'block_approved' | 'block_unapproved' | 'project_archived' | 'project_restored'
+export type AuditAction = 'note_created' | 'note_updated' | 'note_deleted' | 'project_approved' | 'project_new_version' | 'block_approved' | 'block_unapproved' | 'project_archived' | 'project_restored' | 'project_submitted' | 'project_execution_started' | 'project_returned_to_draft' | 'requirement_linked' | 'requirement_unlinked'
 
 export type AuditEventRow = {
   id: string

@@ -3,6 +3,7 @@ import { supabase } from './supabase'
 export type CommentRow = {
   id: string
   project_id: string
+  note_id: string | null
   text: string
   author: string
   created_by: string | null
@@ -25,12 +26,12 @@ export async function listComments(projectId: string): Promise<CommentRow[]> {
   return data ?? []
 }
 
-export async function createComment(projectId: string, text: string, author: string): Promise<CommentRow> {
+export async function createComment(projectId: string, text: string, author: string, noteId: string | null = null): Promise<CommentRow> {
   if (!supabase) throw new Error('Supabase nao configurado.')
 
   const { data, error } = await supabase
     .from('comments')
-    .insert({ project_id: projectId, text, author })
+    .insert({ project_id: projectId, text, author, note_id: noteId })
     .select('*')
     .single()
 

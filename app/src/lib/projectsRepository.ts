@@ -2,6 +2,7 @@ import { supabase } from './supabase'
 import type { CommentRow } from './commentsRepository'
 import type { BlockApprovalRow } from './blockApprovalsRepository'
 import type { BlockApprovalRequirementRow } from './blockApprovalRequirementsRepository'
+import type { RequirementDeliverableLinkRow } from './requirementDeliverableLinksRepository'
 
 export type ProjectRow = {
   id: string
@@ -28,6 +29,14 @@ export type NoteRow = {
   indicator: string | null
   evidence_source: string | null
   review_date: string | null
+  assignee_user_id: string | null
+  assignee_label: string | null
+  position: number
+  pinned: boolean
+  archived_at: string | null
+  risk_probability: 'baixa' | 'media' | 'alta' | null
+  risk_impact: 'baixo' | 'medio' | 'alto' | null
+  risk_response: 'mitigar' | 'transferir' | 'aceitar' | 'evitar' | null
   created_by: string | null
   created_at: string
   updated_at: string
@@ -37,6 +46,12 @@ export type NoteSupportFields = {
   indicator: string | null
   evidenceSource: string | null
   reviewDate: string | null
+}
+
+export type NoteRiskFields = {
+  probability: NoteRow['risk_probability']
+  impact: NoteRow['risk_impact']
+  response: NoteRow['risk_response']
 }
 
 export async function listProjects(organizationId: string): Promise<ProjectRow[]> {
@@ -117,12 +132,12 @@ export async function listNotes(projectId: string): Promise<NoteRow[]> {
   return data ?? []
 }
 
-export async function createNote(projectId: string, blockKey: string, text: string, author: string, color: string, support: NoteSupportFields): Promise<NoteRow> {
+export async function createNote(projectId: string, blockKey: string, text: string, author: string, color: string, support: NoteSupportFields, assignee: { userId: string | null; label: string | null }, position: number): Promise<NoteRow> {
   if (!supabase) throw new Error('Supabase nao configurado.')
 
   const { data, error } = await supabase
     .from('notes')
-    .insert({ project_id: projectId, block_key: blockKey, text, author, color, indicator: support.indicator, evidence_source: support.evidenceSource, review_date: support.reviewDate })
+    .insert({ project_id: projectId, block_key: blockKey, text, author, color, indicator: support.indicator, evidence_source: support.evidenceSource, review_date: support.reviewDate, assignee_user_id: assignee.userId, assignee_label: assignee.label, position })
     .select('*')
     .single()
 
@@ -134,12 +149,17 @@ export async function seedNotesFromTemplate(projectId: string, notes: { blockKey
   if (!supabase) return
   if (notes.length === 0) return
 
-  const rows = notes.map((note) => ({ project_id: projectId, block_key: note.blockKey, text: note.text, color: note.color, author }))
+  const positionByBlock = new Map<string, number>()
+  const rows = notes.map((note) => {
+    const position = positionByBlock.get(note.blockKey) ?? 0
+    positionByBlock.set(note.blockKey, position + 1)
+    return { project_id: projectId, block_key: note.blockKey, text: note.text, color: note.color, author, position }
+  })
   const { error } = await supabase.from('notes').insert(rows)
   if (error) throw error
 }
 
-export async function updateNote(noteId: string, patch: Partial<Pick<NoteRow, 'text' | 'status' | 'color' | 'indicator' | 'evidence_source' | 'review_date'>>): Promise<void> {
+export async function updateNote(noteId: string, patch: Partial<Pick<NoteRow, 'text' | 'status' | 'color' | 'indicator' | 'evidence_source' | 'review_date' | 'assignee_user_id' | 'assignee_label' | 'position' | 'pinned' | 'archived_at' | 'risk_probability' | 'risk_impact' | 'risk_response'>>): Promise<void> {
   if (!supabase) return
 
   const { error } = await supabase.from('notes').update(patch).eq('id', noteId).select('id').single()
@@ -163,6 +183,8 @@ export type ProjectRealtimeHandlers = {
   onBlockApprovalDelete: (approvalId: string) => void
   onBlockApprovalRequirementInsert: (requirement: BlockApprovalRequirementRow) => void
   onBlockApprovalRequirementDelete: (requirementId: string) => void
+  onRequirementDeliverableLinkInsert: (link: RequirementDeliverableLinkRow) => void
+  onRequirementDeliverableLinkDelete: (linkId: string) => void
 }
 
 export function subscribeToProject(projectId: string, handlers: ProjectRealtimeHandlers, onStatus?: (status: 'online' | 'offline') => void) {
@@ -200,6 +222,12 @@ export function subscribeToProject(projectId: string, handlers: ProjectRealtimeH
     })
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'block_approval_requirements', filter: `project_id=eq.${projectId}` }, (payload) => {
       handlers.onBlockApprovalRequirementDelete((payload.old as { id: string }).id)
+    })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'requirement_deliverable_links', filter: `project_id=eq.${projectId}` }, (payload) => {
+      handlers.onRequirementDeliverableLinkInsert(payload.new as RequirementDeliverableLinkRow)
+    })
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'requirement_deliverable_links', filter: `project_id=eq.${projectId}` }, (payload) => {
+      handlers.onRequirementDeliverableLinkDelete((payload.old as { id: string }).id)
     })
     .subscribe((status) => {
       onStatus?.(status === 'SUBSCRIBED' ? 'online' : 'offline')

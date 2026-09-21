@@ -118,3 +118,29 @@
 .invite-form label { flex: 1; display: block; color: #75827e; font-size: 10px; font-weight: 600; }
 .invite-form input, .invite-form select { display: block; width: 100%; margin-top: 6px; border: 1px solid #dfe3de; border-radius: 5px; outline: 0; padding: 9px; color: #4e5b5a; background: #f8f8f4; font-size: 11px; box-sizing: border-box; }
 .invite-accept-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; }
+.empty-block-badge { display: inline-block; margin-left: 7px; padding: 1px 6px; border: 1px dashed #c7cdc4; border-radius: 20px; color: #9aa3a2; font-size: 7px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; vertical-align: middle; }
+.assignee-field { display: block; margin-top: 12px; color: #75827e; font-size: 10px; font-weight: 600; }
+.assignee-field select { display: block; width: 100%; margin-top: 6px; border: 1px solid #dfe3de; border-radius: 5px; outline: 0; padding: 9px; color: #4e5b5a; background: #f8f8f4; font-size: 11px; box-sizing: border-box; }
+.note-unassigned { margin-right: auto; color: #b5793f; font-size: 7px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase; }
+.note-assignee { display: grid; place-items: center; width: 16px; height: 16px; border: 1px solid #ffffff80; border-radius: 50%; color: #2f5a4f; background: #cdeadf; font-size: 6px; font-weight: 700; }
+.note-comment-badge { display: inline-flex; align-items: center; gap: 2px; color: #53615f; font-size: 8px; font-weight: 700; }
+.note-comments { margin-top: 16px; padding-top: 14px; border-top: 1px solid #edf0ec; }
+.note-comments > .canvas-kicker { margin-bottom: 8px; }
+.note-comment { display: flex; gap: 6px; margin: 0; padding: 7px 0; border-bottom: 1px solid #f2f4ef; color: #5c6a68; font-size: 10px; line-height: 1.4; }
+.note-comment:last-of-type { border-bottom: 0; }
+.note-comment b { flex: 0 0 auto; color: #3e4a4b; }
+.note-comment-composer { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.note-comment-composer textarea { width: 100%; min-height: 52px; resize: vertical; border: 1px solid #dfe3de; border-radius: 5px; outline: 0; padding: 8px; color: #4e5b5a; background: #f8f8f4; font-size: 10px; box-sizing: border-box; }
+.note-comment-composer button { align-self: flex-end; }
+.note-pin-button { position: absolute; top: 5px; right: 6px; display: grid; place-items: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%; color: #93a19d99; background: transparent; }
+.note-pin-button:hover { color: #536367; }
+.note-pin-button.pinned { color: #b5793f; background: #ffffff80; }
+.note.archived { opacity: .6; }
+.note-archived-badge { color: #8b7355; font-size: 7px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+.composer-actions { flex-wrap: wrap; }
+.risk-treated-badge { display: inline-block; padding: 1px 6px; border-radius: 20px; color: #a35d3f; background: #f5e2d8; font-size: 7px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+.risk-treated-badge.treated { color: #2f6e57; background: #d9efe3; }
+.risk-treated-row { margin-bottom: 4px; }
+.deliverable-link-list { display: flex; flex-direction: column; gap: 6px; max-height: 140px; overflow-y: auto; }
+.deliverable-link-item { display: flex; align-items: flex-start; gap: 7px; margin: 0; color: #4e5b5a; font-size: 10px; font-weight: 500; }
+.deliverable-link-item input { flex: 0 0 auto; margin-top: 2px; }

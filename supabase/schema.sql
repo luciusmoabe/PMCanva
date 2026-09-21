@@ -54,6 +54,16 @@ alter table public.projects add column if not exists manager_user_id uuid refere
 -- destroying notes/comments/audit/versions — null means active.
 alter table public.projects add column if not exists archived_at timestamptz;
 
+-- Formal lifecycle states. Was free text with only 'RASCUNHO'/'APROVADO'
+-- ever written by the client; EM_VALIDACAO (intermediate review step,
+-- not locked — block-level approval already covers fine-grained
+-- freezing) and EM_EXECUCAO (post-approval, still locked, "Nova
+-- versão" is still the only way out) are new. Archiving stays a
+-- separate axis (archived_at above), not folded into this enum.
+alter table public.projects drop constraint if exists projects_status_check;
+alter table public.projects add constraint projects_status_check
+  check (status in ('RASCUNHO', 'EM_VALIDACAO', 'APROVADO', 'EM_EXECUCAO'));
+
 create table if not exists public.notes (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects (id) on delete cascade,
@@ -78,6 +88,37 @@ create table if not exists public.notes (
 alter table public.notes add column if not exists indicator text;
 alter table public.notes add column if not exists evidence_source text;
 alter table public.notes add column if not exists review_date date;
+
+-- Assignee: who is responsible for this note, distinct from `author`
+-- (who wrote it). Nullable — most notes never get one, and the UI
+-- flags that as "sem responsável" rather than forcing a pick.
+-- assignee_label mirrors the manager_name/author denormalization
+-- pattern (display label alongside the id) so note cards don't need
+-- an extra join to show a name.
+alter table public.notes add column if not exists assignee_user_id uuid references auth.users (id) on delete set null;
+alter table public.notes add column if not exists assignee_label text;
+
+-- Reordenação, fixação e arquivamento de notas individuais.
+-- `position` is a plain per-(project_id, block_key) counter the
+-- client assigns at creation time (current note count in that
+-- block); moving a note up/down swaps `position` with its neighbour.
+-- `pinned` notes float to the top regardless of position. Archiving a
+-- note (unlike archiving a project) does NOT get a lock-bypass
+-- exemption: it is just another note update, so it obeys the same
+-- project/block lock rules as editing or deleting a note already did.
+alter table public.notes add column if not exists position integer not null default 0;
+alter table public.notes add column if not exists pinned boolean not null default false;
+alter table public.notes add column if not exists archived_at timestamptz;
+
+-- Structured risk fields (secao 7 do plano: "um risco deve ter
+-- probabilidade, impacto, resposta e responsavel para ser considerado
+-- tratado"). Responsavel ja e o assignee_user_id acima — nao duplicado
+-- aqui. Nao restrito a block_key = 'risks' no banco (mesma escolha ja
+-- feita para indicator/evidence_source/review_date); o client so
+-- mostra esses campos ao editar uma nota do bloco Riscos.
+alter table public.notes add column if not exists risk_probability text check (risk_probability in ('baixa', 'media', 'alta'));
+alter table public.notes add column if not exists risk_impact text check (risk_impact in ('baixo', 'medio', 'alto'));
+alter table public.notes add column if not exists risk_response text check (risk_response in ('mitigar', 'transferir', 'aceitar', 'evitar'));
 
 -- ------------------------------------------------------------
 -- Invitations: pending organization invite by e-mail. No e-mail
@@ -111,8 +152,9 @@ create unique index if not exists invitations_org_email_pending_idx
   where status = 'pending';
 
 -- ------------------------------------------------------------
--- Comments: project-scoped only (not per-note/per-block yet —
--- see PLANO-SOLUCAO-SAAS.md). Create-only, no edit/delete UI.
+-- Comments: project-scoped by default, optionally attached to one
+-- note (note_id) — see PLANO-SOLUCAO-SAAS.md. Still create-only, no
+-- edit/delete UI, no mentions/resolution (deliberately out of scope).
 -- ------------------------------------------------------------
 
 create table if not exists public.comments (
@@ -124,12 +166,20 @@ create table if not exists public.comments (
   created_at timestamptz not null default now()
 );
 
+-- Optional link to a single note, so a comment can be a reply on that
+-- note's own mini-thread instead of only the project-wide feed. Null
+-- keeps today's behaviour (general project comment). On delete of the
+-- note, its comments go with it — same cascade as everything else
+-- scoped to a note.
+alter table public.comments add column if not exists note_id uuid references public.notes (id) on delete cascade;
+
 create index if not exists notes_project_id_idx on public.notes (project_id);
 create index if not exists projects_organization_id_idx on public.projects (organization_id);
 create index if not exists memberships_user_id_idx on public.memberships (user_id);
 create index if not exists invitations_email_idx on public.invitations (email);
 create index if not exists invitations_organization_id_idx on public.invitations (organization_id);
 create index if not exists comments_project_id_idx on public.comments (project_id);
+create index if not exists comments_note_id_idx on public.comments (note_id) where note_id is not null;
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -195,6 +245,34 @@ as $$
   select organization_id from public.projects where id = target_project_id;
 $$;
 
+-- Used to validate that a note-scoped comment's note_id actually
+-- belongs to the project_id it is being inserted under (see
+-- comments_insert_commenter below) — without this, a client could
+-- attach a comment to project A while pointing note_id at a note
+-- from an unrelated project B.
+create or replace function public.note_project_id(target_note_id uuid)
+returns uuid
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select project_id from public.notes where id = target_note_id;
+$$;
+
+-- Used by requirement_deliverable_links below to confirm each side of
+-- a link actually points at a note in the block it is supposed to
+-- (a "requirement" link pointing at a "why" note would be nonsensical).
+create or replace function public.note_block_key(target_note_id uuid)
+returns text
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select block_key from public.notes where id = target_note_id;
+$$;
+
 create or replace function public.is_org_admin(target_org_id uuid)
 returns boolean
 language sql
@@ -228,11 +306,15 @@ $$;
 revoke all on function public.is_org_member(uuid) from public;
 revoke all on function public.is_org_editor(uuid) from public;
 revoke all on function public.project_organization_id(uuid) from public;
+revoke all on function public.note_project_id(uuid) from public;
+revoke all on function public.note_block_key(uuid) from public;
 revoke all on function public.is_org_admin(uuid) from public;
 revoke all on function public.is_org_commenter(uuid) from public;
 grant execute on function public.is_org_member(uuid) to authenticated;
 grant execute on function public.is_org_editor(uuid) to authenticated;
 grant execute on function public.project_organization_id(uuid) to authenticated;
+grant execute on function public.note_project_id(uuid) to authenticated;
+grant execute on function public.note_block_key(uuid) to authenticated;
 grant execute on function public.is_org_admin(uuid) to authenticated;
 grant execute on function public.is_org_commenter(uuid) to authenticated;
 
@@ -497,12 +579,19 @@ drop policy if exists "comments_insert_commenter" on public.comments;
 create policy "comments_insert_commenter"
   on public.comments for insert
   to authenticated
-  with check (public.is_org_commenter(public.project_organization_id(project_id)) and created_by = auth.uid());
+  with check (
+    public.is_org_commenter(public.project_organization_id(project_id))
+    and created_by = auth.uid()
+    and (note_id is null or public.note_project_id(note_id) = project_id)
+  );
 
 -- ------------------------------------------------------------
--- Project lock: once a project's status is 'APROVADO', its own
--- fields and its notes are frozen until "Nova versão" resets
--- status back to 'RASCUNHO'. Comments are intentionally excluded.
+-- Project lock: once a project's status is 'APROVADO' or
+-- 'EM_EXECUCAO', its own fields and its notes are frozen until "Nova
+-- versão" resets status back to 'RASCUNHO'. 'EM_VALIDACAO' is NOT
+-- locked — it is an intermediate review step, and block-level
+-- approval already covers freezing individual blocks during review.
+-- Comments are intentionally excluded from the lock at every status.
 -- ------------------------------------------------------------
 
 create or replace function public.project_is_locked(target_project_id uuid)
@@ -512,7 +601,7 @@ stable
 security definer
 set search_path = public, pg_temp
 as $$
-  select status = 'APROVADO' from public.projects where id = target_project_id;
+  select status in ('APROVADO', 'EM_EXECUCAO') from public.projects where id = target_project_id;
 $$;
 
 revoke all on function public.project_is_locked(uuid) from public;
@@ -526,14 +615,20 @@ grant execute on function public.project_is_locked(uuid) to authenticated;
 -- Archiving is a lifecycle action, not a content edit, so it is
 -- explicitly exempt from the lock check below: an update that only
 -- touches archived_at (name/manager/version all unchanged) is let
--- through even while the project is APROVADO. Anything that also
--- touches those content fields still gets rejected as before.
+-- through even while the project is locked. Anything that also
+-- touches those content fields still gets rejected as before. Moving
+-- between the two locked statuses (APROVADO -> EM_EXECUCAO, "Iniciar
+-- execução") is itself a status-only change, so it passes through
+-- unblocked — only content changes while locked are rejected.
 create or replace function public.enforce_project_lock()
 returns trigger
 language plpgsql
 as $$
+declare
+  old_locked boolean := old.status in ('APROVADO', 'EM_EXECUCAO');
+  new_locked boolean := new.status in ('APROVADO', 'EM_EXECUCAO');
 begin
-  if old.status = 'APROVADO' and new.status = 'APROVADO'
+  if old_locked and new_locked
      and (old.name, old.manager_name, old.manager_user_id, old.version)
          is distinct from (new.name, new.manager_name, new.manager_user_id, new.version)
   then
@@ -663,12 +758,21 @@ as $$
 declare
   actor_label text := public.current_actor_label();
 begin
-  if new.status = 'APROVADO' and old.status <> 'APROVADO' then
+  if new.status = 'EM_VALIDACAO' and old.status not in ('EM_VALIDACAO', 'APROVADO', 'EM_EXECUCAO') then
+    insert into public.audit_events (project_id, actor, actor_label, action)
+    values (new.id, auth.uid(), actor_label, 'project_submitted');
+  elsif new.status = 'APROVADO' and old.status <> 'APROVADO' then
     insert into public.audit_events (project_id, actor, actor_label, action)
     values (new.id, auth.uid(), actor_label, 'project_approved');
-  elsif old.status = 'APROVADO' and new.status <> 'APROVADO' then
+  elsif new.status = 'EM_EXECUCAO' and old.status <> 'EM_EXECUCAO' then
+    insert into public.audit_events (project_id, actor, actor_label, action)
+    values (new.id, auth.uid(), actor_label, 'project_execution_started');
+  elsif old.status in ('APROVADO', 'EM_EXECUCAO') and new.status not in ('APROVADO', 'EM_EXECUCAO') then
     insert into public.audit_events (project_id, actor, actor_label, action)
     values (new.id, auth.uid(), actor_label, 'project_new_version');
+  elsif new.status = 'RASCUNHO' and old.status = 'EM_VALIDACAO' then
+    insert into public.audit_events (project_id, actor, actor_label, action)
+    values (new.id, auth.uid(), actor_label, 'project_returned_to_draft');
   elsif new.archived_at is not null and old.archived_at is null then
     insert into public.audit_events (project_id, actor, actor_label, action)
     values (new.id, auth.uid(), actor_label, 'project_archived');
@@ -827,7 +931,12 @@ create policy "block_approvals_insert_editor"
 -- Delete: anyone can retract their own approval; an admin can also
 -- clear someone else's (e.g. a stakeholder who left the org) so a
 -- block never gets stuck waiting on an approval nobody can undo.
+-- Named "block_approvals_delete_editor" in an earlier revision; the
+-- drop below targets both names so a database that already has the
+-- old-named policy (from before this rename) gets it cleared too,
+-- while re-runs after this fix drop-and-recreate cleanly either way.
 drop policy if exists "block_approvals_delete_editor" on public.block_approvals;
+drop policy if exists "block_approvals_delete_own_or_admin" on public.block_approvals;
 create policy "block_approvals_delete_own_or_admin"
   on public.block_approvals for delete
   to authenticated
@@ -981,7 +1090,7 @@ create policy "notes_delete_editor"
 -- above, which already inserts these values).
 alter table public.audit_events drop constraint if exists audit_events_action_check;
 alter table public.audit_events add constraint audit_events_action_check
-  check (action in ('note_created', 'note_updated', 'note_deleted', 'project_approved', 'project_new_version', 'block_approved', 'block_unapproved', 'project_archived', 'project_restored'));
+  check (action in ('note_created', 'note_updated', 'note_deleted', 'project_approved', 'project_new_version', 'block_approved', 'block_unapproved', 'project_archived', 'project_restored', 'project_submitted', 'project_execution_started', 'project_returned_to_draft', 'requirement_linked', 'requirement_unlinked'));
 
 create or replace function public.log_block_audit_event()
 returns trigger
@@ -1008,11 +1117,14 @@ create trigger log_block_audit_event
   after insert or delete on public.block_approvals
   for each row execute function public.log_block_audit_event();
 
--- Starting a new version (project leaves APROVADO) also releases
--- every block-level approval — otherwise a block could stay frozen
--- forever across version cycles even after the project itself
--- unlocked. The delete below re-fires log_block_audit_event for
--- each released block, so the "who released what" trail is automatic.
+-- Starting a new version (project leaves the locked group entirely —
+-- APROVADO/EM_EXECUCAO -> RASCUNHO) also releases every block-level
+-- approval — otherwise a block could stay frozen forever across
+-- version cycles even after the project itself unlocked. Moving
+-- APROVADO -> EM_EXECUCAO ("Iniciar execução") does NOT clear these:
+-- the project is still locked, nothing was reopened for editing. The
+-- delete below re-fires log_block_audit_event for each released
+-- block, so the "who released what" trail is automatic.
 create or replace function public.clear_block_approvals_on_new_version()
 returns trigger
 language plpgsql
@@ -1020,7 +1132,7 @@ security definer
 set search_path = public, pg_temp
 as $$
 begin
-  if old.status = 'APROVADO' and new.status <> 'APROVADO' then
+  if old.status in ('APROVADO', 'EM_EXECUCAO') and new.status not in ('APROVADO', 'EM_EXECUCAO') then
     delete from public.block_approvals where project_id = new.id;
   end if;
   return new;
@@ -1031,6 +1143,92 @@ drop trigger if exists clear_block_approvals_on_new_version on public.projects;
 create trigger clear_block_approvals_on_new_version
   after update on public.projects
   for each row execute function public.clear_block_approvals_on_new_version();
+
+-- ------------------------------------------------------------
+-- Requirement <-> deliverable links (secao 7 do plano: "um requisito
+-- deve poder ser associado a pelo menos um grupo de entregas"). Many
+-- to many: a row means "this requirement note is linked to this
+-- deliverable note". "Deve poder" (must be ABLE to) is read as a
+-- capability, not a hard constraint — the UI nudges with a badge when
+-- a requirement has zero links, it does not block saving one without.
+-- ------------------------------------------------------------
+
+create table if not exists public.requirement_deliverable_links (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects (id) on delete cascade,
+  requirement_note_id uuid not null references public.notes (id) on delete cascade,
+  deliverable_note_id uuid not null references public.notes (id) on delete cascade,
+  created_by uuid references auth.users (id) on delete set null default auth.uid(),
+  created_at timestamptz not null default now(),
+  unique (requirement_note_id, deliverable_note_id)
+);
+
+create index if not exists requirement_deliverable_links_project_id_idx on public.requirement_deliverable_links (project_id);
+create index if not exists requirement_deliverable_links_requirement_idx on public.requirement_deliverable_links (requirement_note_id);
+create index if not exists requirement_deliverable_links_deliverable_idx on public.requirement_deliverable_links (deliverable_note_id);
+
+alter table public.requirement_deliverable_links enable row level security;
+
+drop policy if exists "requirement_deliverable_links_select_member" on public.requirement_deliverable_links;
+create policy "requirement_deliverable_links_select_member"
+  on public.requirement_deliverable_links for select
+  to authenticated
+  using (public.is_org_member(public.project_organization_id(project_id)));
+
+-- Both notes must actually belong to this project and to the block
+-- their side of the link implies — without this, a client could link
+-- notes from an unrelated project, or link two "why" notes together.
+drop policy if exists "requirement_deliverable_links_insert_editor" on public.requirement_deliverable_links;
+create policy "requirement_deliverable_links_insert_editor"
+  on public.requirement_deliverable_links for insert
+  to authenticated
+  with check (
+    public.is_org_editor(public.project_organization_id(project_id))
+    and created_by = auth.uid()
+    and not public.project_is_locked(project_id)
+    and not public.block_is_locked(project_id, 'requirements')
+    and not public.block_is_locked(project_id, 'deliverables')
+    and public.note_project_id(requirement_note_id) = project_id
+    and public.note_project_id(deliverable_note_id) = project_id
+    and public.note_block_key(requirement_note_id) = 'requirements'
+    and public.note_block_key(deliverable_note_id) = 'deliverables'
+  );
+
+drop policy if exists "requirement_deliverable_links_delete_editor" on public.requirement_deliverable_links;
+create policy "requirement_deliverable_links_delete_editor"
+  on public.requirement_deliverable_links for delete
+  to authenticated
+  using (
+    public.is_org_editor(public.project_organization_id(project_id))
+    and not public.project_is_locked(project_id)
+    and not public.block_is_locked(project_id, 'requirements')
+    and not public.block_is_locked(project_id, 'deliverables')
+  );
+
+create or replace function public.log_requirement_link_audit_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  actor_label text := public.current_actor_label();
+begin
+  if tg_op = 'INSERT' then
+    insert into public.audit_events (project_id, actor, actor_label, action, block_key)
+    values (new.project_id, auth.uid(), actor_label, 'requirement_linked', 'requirements');
+  elsif tg_op = 'DELETE' then
+    insert into public.audit_events (project_id, actor, actor_label, action, block_key)
+    values (old.project_id, auth.uid(), actor_label, 'requirement_unlinked', 'requirements');
+  end if;
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists log_requirement_link_audit_event on public.requirement_deliverable_links;
+create trigger log_requirement_link_audit_event
+  after insert or delete on public.requirement_deliverable_links
+  for each row execute function public.log_requirement_link_audit_event();
 
 -- ------------------------------------------------------------
 -- Public read-only share link: exposes exactly one approved
@@ -1065,7 +1263,8 @@ grant execute on function public.get_public_canvas_version(uuid) to anon, authen
 
 -- ------------------------------------------------------------
 -- Realtime: broadcast row changes for projects, notes, comments,
--- block approvals and required-approver assignments.
+-- block approvals, required-approver assignments and requirement
+-- <-> deliverable links.
 -- ------------------------------------------------------------
 do $$
 begin
@@ -1098,5 +1297,11 @@ begin
     where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'block_approval_requirements'
   ) then
     alter publication supabase_realtime add table public.block_approval_requirements;
+  end if;
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'requirement_deliverable_links'
+  ) then
+    alter publication supabase_realtime add table public.requirement_deliverable_links;
   end if;
 end $$;

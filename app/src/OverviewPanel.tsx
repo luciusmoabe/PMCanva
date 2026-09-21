@@ -1,9 +1,10 @@
 import type { ProjectRow } from './lib/projectsRepository'
+import { projectStatusLabels } from './lib/projectStatusLabels'
 
 function OverviewPanel({ projects, onOpenProject }: { projects: ProjectRow[]; onOpenProject: (projectId: string) => void }) {
   const total = projects.length
-  const approved = projects.filter((project) => project.status === 'APROVADO').length
-  const pending = total - approved
+  const approved = projects.filter((project) => project.status === 'APROVADO' || project.status === 'EM_EXECUCAO').length
+  const pending = projects.filter((project) => project.status === 'RASCUNHO' || project.status === 'EM_VALIDACAO').length
   const sorted = [...projects].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
 
   return (
@@ -19,7 +20,7 @@ function OverviewPanel({ projects, onOpenProject }: { projects: ProjectRow[]; on
           <div className="overview-row" key={project.id}>
             <span className="overview-project-name">{project.name}</span>
             <span>{project.manager_name || '-'}</span>
-            <span className={project.status === 'APROVADO' ? 'overview-badge approved' : 'overview-badge draft'}>{project.status}</span>
+            <span className={project.status === 'APROVADO' || project.status === 'EM_EXECUCAO' ? 'overview-badge approved' : 'overview-badge draft'}>{projectStatusLabels[project.status] ?? project.status}</span>
             <span>{project.version.toFixed(1)}</span>
             <span>{new Date(project.updated_at).toLocaleString('pt-BR')}</span>
             <button type="button" className="tiny-link" onClick={() => onOpenProject(project.id)}>Abrir</button>
