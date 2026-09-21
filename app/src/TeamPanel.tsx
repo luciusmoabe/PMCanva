@@ -1,0 +1,130 @@
+import { useEffect, useState } from 'react'
+import type { FormEvent } from 'react'
+import { Link2, UserPlus, Users, X } from 'lucide-react'
+import { listOrgMembers, type OrgMember, type Membership } from './lib/organizationsRepository'
+import { buildInvitationLink, createInvitation, listOrgInvitations, revokeInvitation, sendInvitationEmail, type InvitationRow } from './lib/invitationsRepository'
+import { roleLabels } from './lib/roleLabels'
+
+const roleOptions: Membership['role'][] = ['admin', 'editor', 'commenter', 'reader']
+
+function TeamPanel({ organizationId, role }: { organizationId: string; role: Membership['role'] }) {
+  const isAdmin = role === 'admin'
+  const [members, setMembers] = useState<OrgMember[]>([])
+  const [invitations, setInvitations] = useState<InvitationRow[]>([])
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteRole, setInviteRole] = useState<Membership['role']>('editor')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [emailWarning, setEmailWarning] = useState<string | null>(null)
+  const [copiedInvitationId, setCopiedInvitationId] = useState<string | null>(null)
+
+  function refreshMembers() {
+    listOrgMembers(organizationId).then(setMembers)
+  }
+
+  function refreshInvitations() {
+    if (isAdmin) listOrgInvitations(organizationId).then(setInvitations)
+  }
+
+  useEffect(() => {
+    refreshMembers()
+    refreshInvitations()
+  }, [organizationId])
+
+  async function handleInvite(event: FormEvent) {
+    event.preventDefault()
+    if (!inviteEmail.trim()) return
+    setError(null)
+    setEmailWarning(null)
+    setLoading(true)
+    try {
+      const invitation = await createInvitation(organizationId, inviteEmail.trim(), inviteRole)
+      setInviteEmail('')
+      refreshInvitations()
+      try {
+        await sendInvitationEmail(invitation.id, window.location.origin)
+      } catch (emailError) {
+        setEmailWarning(`Convite criado, mas o e-mail não foi enviado (${emailError instanceof Error ? emailError.message : 'erro desconhecido'}). Avise a pessoa por fora por enquanto.`)
+      }
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'Nao foi possivel enviar o convite.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function copyInviteLink(invitationId: string) {
+    navigator.clipboard.writeText(buildInvitationLink(invitationId)).then(() => {
+      setCopiedInvitationId(invitationId)
+      setTimeout(() => setCopiedInvitationId((current) => (current === invitationId ? null : current)), 2000)
+    })
+  }
+
+  async function handleRevoke(invitationId: string) {
+    try {
+      await revokeInvitation(invitationId)
+      setInvitations((current) => current.filter((item) => item.id !== invitationId))
+    } catch (revokeError) {
+      setError(revokeError instanceof Error ? revokeError.message : 'Nao foi possivel revogar o convite.')
+    }
+  }
+
+  return (
+    <div className="team-panel">
+      <div className="team-section">
+        <h2><Users size={16} /> Membros da organizacao</h2>
+        {members.map((member) => (
+          <div className="member-row" key={member.membershipId}>
+            <div className="member-info">
+              <b>{member.fullName || member.email.split('@')[0]}</b>
+              <small>{member.email}</small>
+            </div>
+            <span className="role-badge">{roleLabels[member.role]}</span>
+          </div>
+        ))}
+        {members.length === 0 && <p className="empty-search">Carregando membros...</p>}
+      </div>
+
+      {isAdmin && (
+        <div className="team-section">
+          <h2><UserPlus size={16} /> Convidar membro</h2>
+          <p className="auth-subtitle">Um e-mail com o convite é enviado automaticamente para a pessoa. O link também pode ser copiado e enviado por fora — vale por 7 dias.</p>
+          <form className="invite-form" onSubmit={handleInvite}>
+            <label>E-mail
+              <input type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="pessoa@empresa.com" required />
+            </label>
+            <label>Papel
+              <select value={inviteRole} onChange={(event) => setInviteRole(event.target.value as Membership['role'])}>
+                {roleOptions.map((option) => <option key={option} value={option}>{roleLabels[option]}</option>)}
+              </select>
+            </label>
+            <button type="submit" className="primary-button" disabled={loading}><UserPlus size={15} /> Convidar</button>
+          </form>
+          {error && <div className="error-banner">{error}</div>}
+          {emailWarning && <div className="error-banner">{emailWarning}</div>}
+
+          {invitations.length > 0 && <>
+            <span className="canvas-kicker">CONVITES PENDENTES</span>
+            {invitations.map((invitation) => {
+              const expired = new Date(invitation.expires_at).getTime() < Date.now()
+              return (
+                <div className="invite-row" key={invitation.id}>
+                  <div className="invite-info">
+                    <b>{invitation.email}</b>
+                    <small>{roleLabels[invitation.role]} · {expired ? 'link expirado' : `expira em ${new Date(invitation.expires_at).toLocaleDateString('pt-BR')}`}</small>
+                  </div>
+                  <button className="version-share-button" onClick={() => copyInviteLink(invitation.id)} title="Copiar link do convite">
+                    <Link2 size={13} /> {copiedInvitationId === invitation.id ? 'Copiado!' : 'Copiar link'}
+                  </button>
+                  <button className="icon-button" onClick={() => handleRevoke(invitation.id)} title="Revogar convite"><X size={15} /></button>
+                </div>
+              )
+            })}
+          </>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default TeamPanel
