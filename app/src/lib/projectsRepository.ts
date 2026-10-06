@@ -112,6 +112,13 @@ export async function archiveProject(projectId: string): Promise<void> {
   await updateProject(projectId, { archived_at: new Date().toISOString() })
 }
 
+export async function deleteProject(projectId: string): Promise<void> {
+  if (!supabase) throw new Error('Supabase n?o configurado.')
+  // Returning exactly one row also detects RLS denial (otherwise a silent no-op).
+  const { error } = await supabase.from('projects').delete().eq('id', projectId).select('id').single()
+  if (error) throw error
+}
+
 export async function restoreProject(projectId: string): Promise<void> {
   await updateProject(projectId, { archived_at: null })
 }

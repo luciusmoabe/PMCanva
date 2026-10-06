@@ -3,8 +3,19 @@ import { RotateCcw } from 'lucide-react'
 import { listArchivedProjects, type ProjectRow } from './lib/projectsRepository'
 import { projectStatusLabels } from './lib/projectStatusLabels'
 
-function ArchivedProjectsPanel({ organizationId, onRestore }: { organizationId: string; onRestore: (projectId: string) => Promise<void> }) {
+function ArchivedProjectsPanel({ organizationId, onRestore, canDelete, onDelete }: { organizationId: string; onRestore: (projectId: string) => Promise<void>; canDelete: boolean; onDelete: (project: ProjectRow) => Promise<boolean> }) {
   const [projects, setProjects] = useState<ProjectRow[] | null>(null)
+
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  async function handleDelete(project: ProjectRow) {
+    setDeletingId(project.id)
+    try {
+      if (await onDelete(project)) setProjects((current) => current?.filter((item) => item.id !== project.id) ?? null)
+    } finally {
+      setDeletingId(null)
+    }
+  }
 
   function refresh() {
     listArchivedProjects(organizationId).then(setProjects)
@@ -29,7 +40,7 @@ function ArchivedProjectsPanel({ organizationId, onRestore }: { organizationId: 
             <span className={project.status === 'APROVADO' || project.status === 'EM_EXECUCAO' ? 'overview-badge approved' : 'overview-badge draft'}>{projectStatusLabels[project.status] ?? project.status}</span>
             <span>{project.version.toFixed(1)}</span>
             <span>{project.archived_at ? new Date(project.archived_at).toLocaleString('pt-BR') : '-'}</span>
-            <button type="button" className="tiny-link" onClick={() => handleRestore(project.id)}><RotateCcw size={12} /> Restaurar</button>
+            <span><button type="button" className="tiny-link" onClick={() => handleRestore(project.id)}><RotateCcw size={12} /> Restaurar</button>{canDelete && <button type="button" className="danger-button" disabled={deletingId !== null} onClick={() => void handleDelete(project)}>{deletingId === project.id ? 'Excluindo...' : 'Excluir definitivamente'}</button>}</span>
           </div>
         ))}
       </div>
