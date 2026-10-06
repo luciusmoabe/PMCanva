@@ -170,3 +170,10 @@
   .app-shell .project-menu { width: 218px; max-width: calc(100vw - 30px); }
   .top-actions { gap: 8px; margin-left: 8px; }
 }
+
+.organization-select { width: 180px; max-width: 30vw; flex-shrink: 0; border: 1px solid #d8ded9; border-radius: 5px; padding: 7px; color: #3c474b; background: #fffefa; font: inherit; font-size: 11px; text-overflow: ellipsis; }
+.organization-select:focus-visible { outline: 2px solid #4c9e91; outline-offset: 2px; }
+@media (max-width: 680px) {
+  .organization-select { width: 140px; max-width: 32vw; font-size: 10px; }
+  .topbar-navigation:has(.organization-select) .breadcrumbs { display: none; }
+}
